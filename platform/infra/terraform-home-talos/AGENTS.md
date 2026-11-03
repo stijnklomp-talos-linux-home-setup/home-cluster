@@ -27,8 +27,10 @@ Overview of this component — see `README.md` for prose.
 
 ## Conventions & rules
 
-- Machine secrets (CA material) are NOT wired yet — `machine_secrets` is an optional variable; required at apply and must come from secrets management, never committed. Until wired, the module validates/plans only. talosconfig/kubeconfig outputs are deferred to that follow-up (they need `client_configuration` from `talos_machine_secrets`).
-- Porting manual tweaks (kubePrism, hostDNS, UKI, quotas, PodSecurity, audit policy) into `config_patches` is a TODO — do not claim full code-managed coverage until done.
+- `talos_machine_secrets.this` holds the live CA material and was **imported** from `home-cluster-1-config/secrets.yaml` (outside the repo). Never let an unimported `apply` create it: that generates a new CA/token set and breaks the cluster.
+- talosconfig/kubeconfig come from `talos_client_configuration` / `talos_cluster_kubeconfig` data sources, so `plan` needs LAN access to the control plane node. Both outputs are sensitive.
+- The Talos v1.13 contract defaults already cover kubePrism, hostDNS, UKI cmdline, quotas, PodSecurity, audit policy and the control-plane label. `config_patches` only add the installer image + control-plane install disk. Re-check this against the live config before claiming full coverage.
+- `talos_machine_configuration_apply` is intentionally not wired. Do not add it without user approval; validate with `--mode try` first.
 - Node IPs/versions in `root.hcl` must match `home-cluster-1-config/` + `platform/node/` — changing them without updating those is a mismatch.
 - Outputs contain real PKI once applied — treat as secrets (never print/commit).
 - Cross-repo rules: workspace root `AGENTS.md`.

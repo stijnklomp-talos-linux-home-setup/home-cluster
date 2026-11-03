@@ -16,3 +16,5 @@ terraform.tfvars
 # Local secrets
 .env
 *.secret.tfvars
+secrets.yaml
+*.secrets.yaml
