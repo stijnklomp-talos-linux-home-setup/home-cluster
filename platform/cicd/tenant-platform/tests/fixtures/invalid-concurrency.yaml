@@ -1,0 +1,8 @@
+tenants:
+  - owner: acme
+    namespace: acme
+    tier: build
+    concurrencyLimit: 0
+    repos:
+      - name: widgets
+        url: https://github.com/acme/widgets

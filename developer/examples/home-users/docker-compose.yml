@@ -1,0 +1,260 @@
+# Local development stack (ADR-0009). Profiles:
+#
+#   docker compose --profile infra up -d
+#     Postgres + Valkey + RabbitMQ only.
+#
+#   docker compose --profile dev up
+#     infra + the app from mounted source, hot reload (the daily driver).
+#
+#   docker compose --profile local up --build
+#     infra + the app built from the Dockerfile (ADR-0009).
+#
+#   IMAGE=... docker compose --profile publish up
+#     infra + a published image, no build (ADR-0009).
+#
+#   docker compose --profile test up --build --attach acceptance-once --exit-code-from acceptance-once
+#     infra + a one-shot runner: the acceptance suite runs once and the stack
+#     exits with the suite's status code (`just test-acceptance`). The stack
+#     stops with the runner; `docker compose --profile test down -v` removes
+#     containers and volumes. Every service is profile-gated, so `down` takes
+#     the same --profile flag as `up` (a bare `down` is a no-op).
+#
+#   docker compose --profile acceptance up -d --wait
+#     infra + an idle runner (`just acceptance`). Exec in to run all tests, a
+#     single nextest-filtered test, or debug:
+#
+#       docker compose --profile acceptance exec acceptance \
+#         cargo nextest run --features acceptance --profile acceptance
+#       docker compose --profile acceptance exec acceptance \
+#         cargo nextest run --features acceptance --profile acceptance -E 'test(cache_round_trips)'
+#       docker compose --profile acceptance down -v
+#
+# Service keys mirror the Fastify template (db / cache / rabbitmq), which keeps the committed
+# .env.development values coherent (CACHE_HOST=cache, RABBIT_HOST=rabbitmq) and the dev
+# service's in-network DATABASE_URL override (host `db`) meaningful.
+# Credentials and host ports default to the .env.development values; override them through a
+# local .env file or the shell environment — compose substitution does not read env_file.
+# Every published port is overridable (DATABASE_PORT, CACHE_PORT, RABBIT_PORT,
+# RABBIT_MGMT_PORT), so this stack can run next to another compose stack.
+# The acceptance runner runs as HOST_UID/HOST_GID (default 1000; the `just
+# test-acceptance`/`just acceptance` recipes export the real ids) and keeps its
+# toolchain and crate caches in the gitignored `.acceptance/` directory, with
+# builds in the normal `./target` — both on the host disk, never in a Docker
+# volume.
+
+x-infra: &infra
+  restart: always
+  # Every profile that needs the infra stack lists itself here: compose refuses
+  # `depends_on` targets that the active profiles disable.
+  profiles: [infra, dev, local, publish, test, acceptance]
+
+# Acceptance runner (profiles test + acceptance): the rust toolchain image
+# over mounted source — ticket #12's built image replaces this once it exists.
+# It runs as the invoking user (`HOST_UID`/`HOST_GID`, defaulting to 1000; the
+# just recipes export the real ids) so build artifacts land in the mounted
+# `./target` and `.acceptance/` caches without root ownership — and without
+# filling the Docker volume disk. The first run installs cargo-nextest 0.9.148
+# into the cache and resolves the pinned toolchain; later runs reuse both.
+# Endpoints are the in-network service names, independent of host port remaps.
+x-acceptance: &acceptance
+  image: rust:1.99.1-slim-trixie
+  working_dir: /app
+  user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+  environment:
+    # Toolchain and crate caches live under the mounted tree (gitignored).
+    CARGO_HOME: /app/.acceptance/cargo-home
+    RUSTUP_HOME: /app/.acceptance/rustup-home
+    # cargo-nextest installs into $CARGO_HOME/bin, which is not in the image PATH.
+    PATH: /app/.acceptance/cargo-home/bin:/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin
+    # In-network endpoints (compose DNS), independent of host port remaps.
+    DATABASE_URL: postgres://${DATABASE_USERNAME:-dev}:${DATABASE_PASSWORD:-admin123}@db:5432/${DATABASE_DB:-fastify}
+    CACHE_HOST: cache
+    CACHE_PORT: "6379"
+    CACHE_PASSWORD: ${CACHE_PASSWORD:-admin123}
+    RABBIT_HOST: rabbitmq
+    RABBIT_PORT: "5672"
+    RABBIT_USER: ${RABBIT_USER:-guest}
+    RABBIT_PASSWORD: ${RABBIT_PASSWORD:-guest}
+    RABBIT_TRANSPORT: amqp
+  volumes:
+    - .:/app
+  depends_on:
+    db:
+      condition: service_healthy
+    cache:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+
+services:
+  db:
+    <<: *infra
+    image: postgres:18.6-alpine
+    shm_size: 128mb
+    environment:
+      POSTGRES_USER: ${DATABASE_USERNAME:-dev}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-admin123}
+      POSTGRES_DB: ${DATABASE_DB:-fastify}
+    volumes:
+      # Postgres 18 images keep PGDATA (/var/lib/postgresql/18/docker) under this declared volume.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      # -h 127.0.0.1: the initdb-phase server listens on the unix socket only, so a TCP
+      # check cannot pass before the real server accepts connections.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -d $$POSTGRES_DB -U $$POSTGRES_USER"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    ports:
+      - ${DATABASE_PORT:-5432}:5432
+
+  cache:
+    <<: *infra
+    image: valkey/valkey:9.1.2-alpine
+    command: >
+      valkey-server --save "" --appendonly no --notify-keyspace-events Ex
+      --loglevel notice --requirepass ${CACHE_PASSWORD:-admin123}
+    volumes:
+      - cache-data:/data
+    healthcheck:
+      # valkey-cli exits 0 even on NOAUTH, so assert the reply itself.
+      test: ["CMD-SHELL", "valkey-cli --no-auth-warning -a '${CACHE_PASSWORD:-admin123}' PING | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    ports:
+      - ${CACHE_PORT:-6379}:6379
+
+  rabbitmq:
+    <<: *infra
+    image: rabbitmq:3.13.7-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USER:-guest}
+      RABBITMQ_DEFAULT_PASSWORD: ${RABBIT_PASSWORD:-guest}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 15s
+    ports:
+      - ${RABBIT_PORT:-5672}:5672
+      - ${RABBIT_MGMT_PORT:-15672}:15672
+
+  dev:
+    profiles: [dev]
+    image: rust:1.99.1-slim-trixie
+    working_dir: /app
+    # bacon (cargo-watch is unmaintained) rebuilds and restarts the app on source changes;
+    # headless mode streams the job's stdout/stderr straight to the compose logs.
+    command: >
+      sh -c "command -v bacon >/dev/null 2>&1 || cargo install --locked bacon@3.26.0;
+      exec bacon run --headless"
+    env_file: .env.development
+    environment:
+      # In-network overrides: .env.development targets host-side endpoints.
+      CACHE_HOST: cache
+      RABBIT_HOST: rabbitmq
+      DATABASE_URL: postgres://dev:admin123@db:5432/fastify
+    ports:
+      - ${API_PORT:-3000}:3000
+    volumes:
+      - .:/app
+      # Toolchain-agnostic caches: the host needs no Rust install, container builds never
+      # touch the host target dir, and the first bacon install survives `down`.
+      - cargo-home:/usr/local/cargo
+      - cargo-target:/app/target
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  # The image built from the Dockerfile, run like `dev` but without the source
+  # mount (ADR-0009). docker compose --profile local up --build.
+  local:
+    profiles: [local]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: home-users:local
+    env_file: .env.development
+    environment:
+      # In-network overrides: .env.development targets host-side endpoints.
+      CACHE_HOST: cache
+      RABBIT_HOST: rabbitmq
+      DATABASE_URL: postgres://dev:admin123@db:5432/fastify
+    ports:
+      - ${API_PORT:-3000}:3000
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  # A published registry image, no build: `IMAGE` selects it (defaults to the
+  # `just docker-build` tag). IMAGE=registry/... docker compose --profile
+  # publish up. Same wiring as `local`.
+  publish:
+    profiles: [publish]
+    image: ${IMAGE:-home-users:local}
+    env_file: .env.development
+    environment:
+      # In-network overrides: .env.development targets host-side endpoints.
+      CACHE_HOST: cache
+      RABBIT_HOST: rabbitmq
+      DATABASE_URL: postgres://dev:admin123@db:5432/fastify
+    ports:
+      - ${API_PORT:-3000}:3000
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  # One-shot acceptance run (compose `test` profile): install nextest if the
+  # host cache does not have it yet, run the suite once, exit with its status
+  # code. `just test-acceptance`.
+  acceptance-once:
+    <<: *acceptance
+    profiles: [test]
+    command: >
+      sh -c "command -v cargo-nextest >/dev/null 2>&1 ||
+      cargo install --locked cargo-nextest --version 0.9.148;
+      exec cargo nextest run --features acceptance --profile acceptance"
+
+  # Idle acceptance stack (compose `acceptance` profile) for exec-driven runs
+  # and debugging. The healthcheck only passes once the runner can actually
+  # execute the suite (nextest installed, pinned toolchain resolved), so
+  # `up -d --wait` is safe to follow with an exec.
+  acceptance:
+    <<: *acceptance
+    profiles: [acceptance]
+    command: >
+      sh -c "command -v cargo-nextest >/dev/null 2>&1 ||
+      cargo install --locked cargo-nextest --version 0.9.148;
+      cd /app && cargo --version >/dev/null 2>&1;
+      exec sleep infinity"
+    healthcheck:
+      test: ["CMD-SHELL", "cd /app && cargo nextest --version >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+      start_period: 10s
+
+volumes:
+  postgres-data:
+  cache-data:
+  rabbitmq-data:
+  cargo-home:
+  cargo-target:

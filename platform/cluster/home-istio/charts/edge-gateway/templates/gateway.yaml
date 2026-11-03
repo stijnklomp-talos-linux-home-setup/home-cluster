@@ -1,0 +1,119 @@
+# Production edge: HTTPS termination for the three UIs and raw TLS
+# passthrough for Pinniped, all on the existing MetalLB address. The listener
+# set deliberately mirrors the ticket #11 rehearsal (mixed HTTPS + TLS on one
+# :443 port); that combination is verified on Istio 1.31.3.
+#
+# Six listeners, five distinct hostnames: the HTTP :80 listener has no
+# hostname, and the five :443 listeners each own one. Gateway API listener
+# distinctness is (port, protocol, hostname), and `tls` is not part of it.
+# That is also why every route below binds by sectionName — port 443 alone is
+# ambiguous.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: istio-internal
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: edge-gateway
+    app.kubernetes.io/part-of: home-istio
+spec:
+  gatewayClassName: istio
+  infrastructure:
+    annotations:
+      # MetalLB hands the generated Service this exact address. The address
+      # was owned by ingress-nginx before the cutover.
+      metallb.io/loadBalancerIPs: {{ .Values.lbIP | quote }}
+    {{- if .Values.ambient }}
+    labels:
+      istio.io/dataplane-mode: ambient
+    {{- end }}
+  listeners:
+    # `allowedRoutes` is repeated verbatim per listener on purpose: a YAML
+    # anchor cannot span the templated value, and an explicit block keeps the
+    # admission rule visible next to every listener.
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              {{ .Values.routeLabel.key }}: {{ .Values.routeLabel.value | quote }}
+
+    - name: https-argocd
+      hostname: {{ printf "%s.%s" .Values.hosts.argocd .Values.hostSuffix | quote }}
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ .Values.certificate.secretName }}
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              {{ .Values.routeLabel.key }}: {{ .Values.routeLabel.value | quote }}
+
+    - name: https-tekton
+      hostname: {{ printf "%s.%s" .Values.hosts.tekton .Values.hostSuffix | quote }}
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ .Values.certificate.secretName }}
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              {{ .Values.routeLabel.key }}: {{ .Values.routeLabel.value | quote }}
+
+    - name: https-pac
+      hostname: {{ printf "%s.%s" .Values.hosts.pipelinesAsCode .Values.hostSuffix | quote }}
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ .Values.certificate.secretName }}
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              {{ .Values.routeLabel.key }}: {{ .Values.routeLabel.value | quote }}
+
+    # Pinniped terminates TLS itself: the supervisor serves supervisor-public-tls
+    # and the concierge impersonation proxy serves its own self-signed CA. The
+    # gateway only forwards on SNI, exactly like the old ssl-passthrough Ingress.
+    - name: tls-login
+      hostname: {{ printf "%s.%s" .Values.hosts.login .Values.hostSuffix | quote }}
+      port: 443
+      protocol: TLS
+      tls:
+        mode: Passthrough
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              {{ .Values.routeLabel.key }}: {{ .Values.routeLabel.value | quote }}
+
+    - name: tls-kubectl
+      hostname: {{ printf "%s.%s" .Values.hosts.kubectl .Values.hostSuffix | quote }}
+      port: 443
+      protocol: TLS
+      tls:
+        mode: Passthrough
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              {{ .Values.routeLabel.key }}: {{ .Values.routeLabel.value | quote }}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: edge-gateway
+description: Production Istio Gateway API edge (istio-internal) for the home cluster
+type: application
+version: 0.1.0
+appVersion: "1.0"

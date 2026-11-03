@@ -1,0 +1,114 @@
+# Istio 1.31.3 for the internal edge and ambient mTLS.
+#
+# Deploy after Cilium: the Istio CNI node agent chains itself into the existing
+# CNI config, which only works while Cilium runs with `cni.exclusive: false`
+# (see home-cilium/values/cilium-values.yaml and the service-networking ADR).
+#
+# Ambient mode has no sidecars. istiod programs ztunnel, and the Istio CNI
+# agent redirects ambient pod traffic to it; a namespace opts in with the
+# `istio.io/dataplane-mode: ambient` label. Charts are vendored from the
+# 1.31.3 release tarball because the upstream Helm repository lags the release
+# (see README.md).
+#
+# The Gateway API CRDs live here too: the edge cutover binds a Gateway,
+# HTTPRoutes and TLSRoutes to them, and Istio 1.31 expects a recent version.
+
+helmDefaults:
+  createNamespace: true
+  wait: true
+  timeout: 900 # 15 minutes
+
+releases:
+  - name: gateway-api-crds
+    namespace: istio-system
+    chart: ./kustomizations/gateway-api
+    labels:
+      stage: "crds"
+
+  - name: istio-base
+    namespace: istio-system
+    chart: ./charts/upstream/base-1.31.3.tgz
+    version: 1.31.3
+    labels:
+      stage: "upstream"
+    needs:
+      - gateway-api-crds
+    hooks:
+      # ztunnel and the Istio CNI agent need NET_ADMIN/SYS_ADMIN, which the
+      # cluster-wide `baseline` PodSecurity default rejects (Talos exempts
+      # only kube-system). Pre-create the namespace with the privileged label
+      # so the first install is not rejected; same pattern as metallb-system.
+      # This is a raw manifest (not a kustomization): the presync hook applies
+      # the file directly, so it lives in manifests/ and `kubectl kustomize`
+      # is never involved.
+      - events: ["presync"]
+        kubectlApply:
+          filename: manifests/istio-system/namespace.yaml
+
+  - name: istiod
+    namespace: istio-system
+    chart: ./charts/upstream/istiod-1.31.3.tgz
+    version: 1.31.3
+    labels:
+      stage: "upstream"
+    values:
+      - ./values/istiod-values.yaml
+    needs:
+      - istio-base
+
+  - name: istio-cni
+    namespace: istio-system
+    chart: ./charts/upstream/cni-1.31.3.tgz
+    version: 1.31.3
+    labels:
+      stage: "upstream"
+    values:
+      - ./values/cni-values.yaml
+    needs:
+      - istiod
+
+  - name: ztunnel
+    namespace: istio-system
+    chart: ./charts/upstream/ztunnel-1.31.3.tgz
+    version: 1.31.3
+    labels:
+      stage: "upstream"
+    values:
+      - ./values/ztunnel-values.yaml
+    needs:
+      - istiod
+
+  # Custom charts/kustomizations
+
+  - name: ambient-probe-policy
+    namespace: istio-system
+    chart: ./kustomizations/ambient-probe-policy
+    labels:
+      stage: "policy"
+    needs:
+      - istio-cni
+
+  # Acceptance proof for ticket #10. Harmless scratch workloads. They are not
+  # permanently removed by `helmfile -l stage=sandbox destroy`: the next plain
+  # `helmfile apply` recreates them. Delete the two releases from this file
+  # (or keep destroying) once the mesh is trusted.
+  - name: ambient-sandbox
+    namespace: ambient-sandbox
+    # Helm creates the namespace before applying the release; the Namespace
+    # object in the kustomization then adds the ambient label. Helm sorts
+    # Namespace first, so the pods never start unlabeled.
+    chart: ./kustomizations/ambient-sandbox
+    labels:
+      stage: "sandbox"
+    needs:
+      - istio-system/ztunnel
+      - istio-system/istio-cni
+      - istio-system/ambient-probe-policy
+
+  - name: ambient-sandbox-nomesh
+    namespace: ambient-sandbox-nomesh
+    chart: ./kustomizations/ambient-sandbox-nomesh
+    labels:
+      stage: "sandbox"
+    needs:
+      - istio-system/ztunnel

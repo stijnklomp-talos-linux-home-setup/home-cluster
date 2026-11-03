@@ -1,0 +1,88 @@
+# apps-baremetal — generates <app>-dev, <app>-staging and <app>-prod on
+# home-cluster-1 for every service declaration in developer/apps/baremetal/.
+#
+# Adding a service to bare-metal = dropping a declaration file in
+# developer/apps/baremetal/ (see templates/service-declaration.yaml.tpl).
+#
+# Environment semantics:
+#   dev     -> bump imageTagDev on merge to main (Tekton) -> auto-sync
+#   staging -> bump imageTagStaging/targetRevisionStaging on a v* tag -> auto-sync
+#   prod    -> imageTagProd/targetRevisionProd recorded on the same tag, but NO
+#              automated syncPolicy: a human clicks Sync in ArgoCD to deploy
+#              (manual production gate; rollback = sync an older revision).
+#
+# The auto-sync flag is applied via templatePatch (spec.template fields are
+# string-templated only; templatePatch supports conditionals).
+#
+# EKS: same pattern in applications/eks.yaml once the EKS cluster is registered.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: apps-baremetal
+  namespace: argo
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - git:
+              repoURL: https://github.com/stijnklomp-talos-linux-home-setup/home-cluster
+              revision: main
+              # Poll faster than the 3m default so dev/staging pick up CI bumps sooner
+              requeueAfterSeconds: 60
+              files:
+                - path: developer/apps/baremetal/*.yaml
+          - list:
+              elements:
+                - env: dev
+                  autoSync: "true"
+                  revisionKey: targetRevisionDev
+                  tagKey: imageTagDev
+                - env: staging
+                  autoSync: "true"
+                  revisionKey: targetRevisionStaging
+                  tagKey: imageTagStaging
+                - env: prod
+                  autoSync: "false"
+                  revisionKey: targetRevisionProd
+                  tagKey: imageTagProd
+  template:
+    metadata:
+      name: '{{ .app }}-{{ .env }}'
+      namespace: argo
+    spec:
+      project: default
+      source:
+        repoURL: '{{ .repoURL }}'
+        targetRevision: '{{ index . .revisionKey }}'
+        path: '{{ .chartPath }}'
+        helm:
+          parameters:
+            - name: image.repository
+              value: '{{ .imageRepository }}'
+            - name: image.tag
+              value: '{{ index . .tagKey }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .app }}-{{ .env }}'
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+  # Applied as a strategic merge patch after Go templating. The conditional
+  # lives here, not in spec.template, because the ApplicationSet itself must
+  # stay valid YAML before the Go template runs.
+  templatePatch: |
+    spec:
+      {{- if .valuesFile }}
+      source:
+        helm:
+          valueFiles:
+            - '{{ .valuesFile }}'
+      {{- end }}
+      {{- if eq .autoSync "true" }}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+      {{- end }}

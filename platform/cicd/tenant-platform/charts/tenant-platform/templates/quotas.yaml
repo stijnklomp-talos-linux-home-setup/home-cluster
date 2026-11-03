@@ -1,0 +1,29 @@
+{{- range $tenant := .Values.tenants }}
+{{- $tier := index $.Values.tiers $tenant.tier }}
+{{- $quota := mergeOverwrite (deepCopy $tier.quota) ($tenant.quota | default dict) }}
+{{- $limitRange := mergeOverwrite (deepCopy $tier.limitRange) ($tenant.limitRange | default dict) }}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant-quota
+  namespace: {{ $tenant.namespace }}
+spec:
+  hard:
+{{ toYaml $quota | indent 4 }}
+---
+# Defaults must fit the quota above so a container without explicit resources
+# still schedules instead of failing admission.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: tenant-limits
+  namespace: {{ $tenant.namespace }}
+spec:
+  limits:
+    - type: Container
+      default:
+{{ toYaml $limitRange.default | indent 8 }}
+      defaultRequest:
+{{ toYaml $limitRange.defaultRequest | indent 8 }}
+{{- end }}

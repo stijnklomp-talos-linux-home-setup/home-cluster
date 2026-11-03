@@ -1,0 +1,53 @@
+# Verification caller for ticket #15 — NOT part of the chart.
+#
+# The gateway's Cilium policy admits callers only from its own namespace and
+# host probes. This pod is the authorized in-cluster caller used to prove the
+# query path and the 401 behaviour. Apply it, capture the evidence, delete it:
+#
+#   kubectl apply -f deploy/verification/caller.yaml
+#   kubectl -n home-graphql exec deploy/home-graphql-caller -- ...
+#   kubectl delete -f deploy/verification/caller.yaml
+#
+# The namespace must already exist (the chart creates it).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: home-graphql-caller
+  labels:
+    app: home-graphql-caller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: home-graphql-caller
+  template:
+    metadata:
+      labels:
+        app: home-graphql-caller
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: curl
+          image: curlimages/curl:8.16.0
+          command:
+            - sleep
+            - infinity
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

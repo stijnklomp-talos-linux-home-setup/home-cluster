@@ -1,0 +1,23 @@
+# Disable Talos' default CNI (Flannel) so Cilium can own pod networking.
+#
+# Talos v1.13.x form. Talos v1.14+ replaces this with a
+# `KubeFlannelCNIConfig` `$patch: delete` document; the cluster is pinned to
+# v1.13.9, so keep this form until Talos is upgraded.
+#
+# Apply to every node's machine config (control plane and workers):
+#
+#   talosctl --talosconfig <talosconfig> patch machineconfig \
+#     --nodes <node-ip> --patch @patches/cni-cilium.yaml --dry-run
+#   talosctl --talosconfig <talosconfig> patch machineconfig \
+#     --nodes <node-ip> --patch @patches/cni-cilium.yaml
+#
+# For a fresh cluster, pass it to `talosctl gen config`:
+#
+#   talosctl gen config home-cluster-1 https://192.168.1.107:6443 \
+#     --config-patch @patches/cni-cilium.yaml
+#
+# kube-proxy stays enabled: Cilium runs with kubeProxyReplacement=false.
+cluster:
+  network:
+    cni:
+      name: none

@@ -1,0 +1,22 @@
+# Cilium is the cluster CNI. It must be installed after the Talos machine
+# configs are patched with `cluster.network.cni.name: none`
+# (platform/node/patches/cni-cilium.yaml), and before MetalLB: nothing has
+# pod networking until the CNI is running.
+#
+# See README.md for the rollout order, the pod-restart impact list and the
+# Flannel rollback procedure.
+
+helmDefaults:
+  createNamespace: true
+  wait: true
+  timeout: 900 # 15 minutes
+
+releases:
+  - name: cilium
+    namespace: kube-system
+    chart: ./charts/upstream/cilium-1.20.4.tgz
+    version: 1.20.4
+    values:
+      - ./values/cilium-values.yaml
+    labels:
+      stage: "upstream"

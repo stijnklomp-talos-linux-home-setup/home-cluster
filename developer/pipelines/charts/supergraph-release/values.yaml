@@ -1,0 +1,55 @@
+# supergraph-release chart values.
+#
+# The Tasks/Pipeline are shared catalog objects and always land in
+# `tekton-pipelines` (cluster resolver scope). The RBAC and the source PVC are
+# the namespaced objects: they render into the namespace that owns the
+# supergraph ConfigMap (`configMap.namespace`), never into a tenant and never
+# into `tekton-pipelines`.
+#
+# Install this release *after* the gateway chart. The publisher only updates an
+# existing ConfigMap (no `create`), and the namespace of the RBAC/PVC must
+# already exist because the catalog release does not create it.
+configMap:
+  # Rendered name of the Hive Gateway supergraph ConfigMap
+  # (`home-graphql.deploy/home-graphql/templates/configmap.yaml`).
+  name: home-graphql-supergraph
+  # Namespace that owns the ConfigMap. The ServiceAccount/Role/RoleBinding and
+  # the source PVC render here, not in `tekton-pipelines`.
+  namespace: home-graphql
+  # Key inside the ConfigMap that holds the composed supergraph SDL.
+  key: supergraph.graphql
+
+serviceAccount:
+  # PipelineRun identity with permission to update that one ConfigMap.
+  name: supergraph-release
+
+images:
+  # Rover 1.0.1 + the pinned ELv2 `supergraph` composition plugin.
+  rover: ghcr.io/apollographql/rover:1.0.1
+  # kubectl + bash for the seed/ConfigMap steps (the registry.k8s.io/kubectl
+  # image is distroless and has no shell).
+  kubectl: docker.io/alpine/k8s:1.36.0
+
+rover:
+  # Pin the composition plugin exactly: an implicit upgrade recomposes the
+  # supergraph without a git diff. Keep in step with home-graphql's
+  # `supergraph.yaml` (`federation_version: =2.9.3`).
+  plugin: supergraph@=2.9.3
+
+source:
+  # `home-graphql` has no reachable git remote from the cluster, so the source
+  # workspace is a persistent PVC that the seed Task fills from a ConfigMap.
+  pvc:
+    # Render the PVC in `configMap.namespace`. Set to false to bring your own
+    # claim with the same name.
+    create: true
+    # Must match `claimName` in usage-examples/v1/pipelinerun.yaml.
+    name: supergraph-release-source
+    size: 1Gi
+    storageClassName: longhorn
+  seed:
+    # ConfigMap with the checkout as a base64 gzip tar (`source.tgz.b64`),
+    # created by hand from the home-graphql working tree (README "Usage").
+    configMapName: supergraph-source
+    # Single data key inside that ConfigMap.
+    key: source.tgz.b64

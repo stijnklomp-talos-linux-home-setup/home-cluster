@@ -1,0 +1,176 @@
+{{- range $task := list "build-push-v1" "kaniko-v1" }}
+{{- $deprecated := eq $task "kaniko-v1" }}
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: {{ $task }}
+  namespace: tekton-pipelines
+  labels:
+    app.kubernetes.io/version: "0.2"
+  annotations:
+    tekton.dev/pipelines.minVersion: "0.38.0"
+    tekton.dev/categories: Image Build
+    tekton.dev/tags: image-build
+    tekton.dev/displayName: "{{ if $deprecated }}kaniko-v1 (deprecated alias for build-push-v1){{ else }}Build and push a container image (rootless Buildah){{ end }}"
+    tekton.dev/platforms: "linux/amd64,linux/arm64"
+    {{- if $deprecated }}
+    tekton.dev/deprecated: "true"
+    {{- end }}
+spec:
+  description: >-
+    {{- if $deprecated }}
+    DEPRECATED alias for build-push-v1, kept so existing .tekton/ pipelines that
+    reference kaniko-v1 keep working. It has exactly the same spec and runs
+    rootless Buildah (chroot isolation, vfs storage); it no longer uses kaniko.
+    {{- else }}
+    Builds a Dockerfile with rootless Buildah (chroot isolation, vfs storage)
+    and pushes the result. Designed for Pod Security 'restricted': no added
+    capabilities, no privileged mode, no hostPath, and a strict allowlist
+    seccomp profile (see README.md).
+    {{- end }}
+
+    setup-npmrc runs as UID/GID 65532 (the catalog workspace identity) and the
+    Buildah step as UID/GID 1000 (the image's `build` user, needed by
+    `user.Current()`); it only reads the workspace.
+
+    The Buildah step needs the Localhost seccomp profile installed on every
+    node (/var/lib/kubelet/seccomp/profiles/buildah-userns.json, installed by
+    platform/node/patches/buildah-seccomp.yaml) because the default profile blocks
+    unshare(CLONE_NEWUSER) and the mount/chroot syscalls rootless builds use.
+    The profile is set in values.yaml (buildah.seccompProfile).
+  params:
+    - name: IMAGE
+      description: Name (reference) of the image to build and push.
+    - name: DOCKERFILE
+      description: Path to the Dockerfile, relative to the source workspace.
+      default: ./Dockerfile
+    - name: CONTEXT
+      description: Build context, relative to the source workspace.
+      default: ./
+    - name: EXTRA_ARGS
+      description: Extra arguments passed to `buildah bud`.
+      type: array
+      default: []
+    - name: BUILDER_IMAGE
+      description: Rootless Buildah image (kaniko images are no longer supported).
+      default: quay.io/buildah/stable:v1.41.5
+    - name: STORAGE_DRIVER
+      description: Buildah storage driver (vfs needs no fuse/overlay privileges).
+      default: vfs
+    - name: FORMAT
+      description: Output image format (oci or docker).
+      default: oci
+  workspaces:
+    - name: source
+      description: Holds the context and Dockerfile
+    - name: dockerconfig
+      description: Optional docker `config.json` for the push target
+      optional: true
+      mountPath: /tmp/.docker
+    - name: npmrc
+      description: Optional .npmrc for private npm/pnpm registries
+      optional: true
+  results:
+    - name: IMAGE_DIGEST
+      description: Digest of the image just built.
+    - name: IMAGE_URL
+      description: URL of the image just built.
+  steps:
+    - name: setup-npmrc
+      workingDir: $(workspaces.source.path)
+      image: docker.io/library/bash:5.1.4@sha256:c523c636b722339f41b6a431b44588ab2f762c5de5ec3bd7964420ff982fb1d9
+      env:
+        - name: HOME
+          value: /tmp
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      script: |
+        set -e
+
+        if [ -d "$(workspaces.npmrc.path)" ] && [ -f "$(workspaces.npmrc.path)/.npmrc" ]; then
+          echo "Copying .npmrc from npmrc workspace into build context..."
+          # A recycled PVC may still hold an .npmrc owned by a previous UID;
+          # removing it first keeps the step idempotent.
+          rm -f .npmrc
+          cp "$(workspaces.npmrc.path)/.npmrc" .npmrc
+        else
+          echo "WARNING: npmrc workspace not provided or .npmrc missing; skipping npmrc setup"
+        fi
+    - name: build-and-push
+      workingDir: $(workspaces.source.path)
+      image: $(params.BUILDER_IMAGE)
+      env:
+        # /home/build exists in the buildah image and is owned by UID 1000.
+        - name: HOME
+          value: /home/build
+        - name: TMPDIR
+          value: /tmp
+        - name: BUILDAH_ISOLATION
+          value: chroot
+        - name: STORAGE_DRIVER
+          value: $(params.STORAGE_DRIVER)
+        - name: NPM_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: npm-secret
+              key: NPM_TOKEN
+              optional: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: {{ $.Values.buildah.seccompProfile.type }}
+          {{- if eq $.Values.buildah.seccompProfile.type "Localhost" }}
+          localhostProfile: {{ $.Values.buildah.seccompProfile.localhostProfile }}
+          {{- end }}
+      args:
+        - "$(params.EXTRA_ARGS[*])"
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        # Buildah reads registry credentials from DOCKER_CONFIG (mounted from
+        # the optional dockerconfig workspace). Only point it at the file when
+        # it is actually there; setting DOCKER_CONFIG to a missing file makes
+        # push fail with "credential file is not accessible" (anonymous
+        # registries such as ttl.sh need no credentials).
+        if [ -f /tmp/.docker/config.json ]; then
+          export DOCKER_CONFIG=/tmp/.docker
+          export REGISTRY_AUTH_FILE=/tmp/.docker/config.json
+        fi
+
+        BUILD_ARGS=()
+        if [ -n "${NPM_TOKEN:-}" ]; then
+          BUILD_ARGS+=(--build-arg "NPM_TOKEN=${NPM_TOKEN}")
+        fi
+
+        buildah --storage-driver="$(params.STORAGE_DRIVER)" bud \
+          --isolation=chroot \
+          --format="$(params.FORMAT)" \
+          --tls-verify=true \
+          -f "$(params.DOCKERFILE)" \
+          -t "$(params.IMAGE)" \
+          "${BUILD_ARGS[@]}" \
+          "$@" \
+          "$(params.CONTEXT)"
+
+        buildah --storage-driver="$(params.STORAGE_DRIVER)" push \
+          --digestfile /tmp/image-digest \
+          --tls-verify=true \
+          "$(params.IMAGE)" "docker://$(params.IMAGE)"
+
+        cat /tmp/image-digest > "$(results.IMAGE_DIGEST.path)"
+        printf '%s' "$(params.IMAGE)" > "$(results.IMAGE_URL.path)"
+{{- end }}

@@ -1,0 +1,14 @@
+helmDefaults:
+  createNamespace: true
+  wait: true
+  timeout: 900 # 15 minutes
+
+releases:
+  - name: verdaccio
+    namespace: verdaccio
+    chart: ./charts/upstream/verdaccio-4.35.1.tgz
+    version: 4.35.1
+    labels:
+      stage: "upstream"
+    values:
+      - values/verdaccio-values.yaml

@@ -1,0 +1,81 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: npm-install-v1
+  namespace: tekton-pipelines
+  annotations:
+    tekton.dev/categories: "Package Management"
+    tekton.dev/tags: "npm,pnpm"
+    tekton.dev/displayName: "npm install"
+spec:
+  description: >-
+    Installs Node dependencies from the Verdaccio cache (or npmjs.org for
+    packages it has not cached yet). Runs as UID/GID 65532 under Pod Security
+    'restricted': HOME, the npm/pnpm caches and corepack's shim directory are
+    all redirected to /tmp because the node:22 image's system directories are
+    root-owned. Bind the `source` workspace as a PVC with fsGroup 65532 (see
+    README.md), otherwise `pnpm install` cannot write node_modules.
+  workspaces:
+    - name: source
+    - name: npmrc
+  steps:
+    - name: pnpm-install
+      image: node:22
+      workingDir: $(workspaces.source.path)
+      env:
+        # /tmp is the only writable place for an arbitrary non-root UID in
+        # node:22; /home/node is writable too, but /tmp keeps the state
+        # ephemeral and independent of the image layout.
+        - name: HOME
+          value: /tmp
+        - name: TMPDIR
+          value: /tmp
+        - name: NPM_CONFIG_USERCONFIG
+          value: /tmp/.npmrc
+        - name: NPM_CONFIG_CACHE
+          value: /tmp/.npm
+        - name: COREPACK_HOME
+          value: /tmp/corepack
+        - name: PNPM_HOME
+          value: /tmp/pnpm
+        - name: PATH
+          value: /tmp/corepack-bin:/tmp/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        - name: NPM_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: npm-secret
+              key: NPM_TOKEN
+              optional: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      script: |
+        set -eux
+
+        # Copy the (read-only) ConfigMap .npmrc to a writable path, then apply
+        # our overrides there.
+        cp "$(workspaces.npmrc.path)/.npmrc" /tmp/.npmrc
+
+        # Enforce a 1-week minimum package age
+        echo "minimum-release-age=10080" >> "$NPM_CONFIG_USERCONFIG"
+
+        # corepack enable writes shims next to the node binary (/usr/local/bin),
+        # which is root-owned. Install the shims into /tmp instead and put that
+        # directory on PATH.
+        mkdir -p /tmp/corepack-bin /tmp/pnpm
+        corepack enable --install-directory /tmp/corepack-bin
+        corepack prepare pnpm@latest --activate
+
+        # NPM_TOKEN is only required when a private registry is configured in .npmrc
+        if ! command -v pnpm >/dev/null 2>&1; then
+          echo "pnpm not found, falling back to npm ci" >&2
+          npm ci --cache /tmp/.npm
+        else
+          pnpm install --frozen-lockfile
+        fi

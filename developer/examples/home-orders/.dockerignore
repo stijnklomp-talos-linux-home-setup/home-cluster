@@ -1,0 +1,12 @@
+*
+!.cargo
+!.cargo/**
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!migrations
+!migrations/**
+!src
+!src/**
+!.sqlx
+!.sqlx/**

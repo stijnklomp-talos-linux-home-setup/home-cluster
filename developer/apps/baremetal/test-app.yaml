@@ -1,0 +1,18 @@
+# test-app — one declaration per (service, target cluster). The apps-baremetal
+# ApplicationSet generates test-app-dev / -staging / -prod from this file.
+#
+# Keys are flat on purpose (the ApplicationSet git file generator flattens
+# nested YAML; the gitops-yaml-bump task edits these keys by name):
+#   - targetRevision<Env> / imageTag<Env> are maintained by CI (merge -> dev,
+#     v* tag -> staging + prod). Do not rename without updating the pipelines.
+app: test-app
+repoURL: https://github.com/stijnklomp-LAVE/test-app
+chartPath: deploy/hello-app
+valuesFile: ""
+imageRepository: docker.io/stijnklomp/test-app
+targetRevisionDev: main
+targetRevisionStaging: main
+targetRevisionProd: main
+imageTagDev: latest
+imageTagStaging: latest
+imageTagProd: latest

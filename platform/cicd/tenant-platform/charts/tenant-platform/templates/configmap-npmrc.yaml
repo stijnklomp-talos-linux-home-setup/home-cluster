@@ -1,0 +1,14 @@
+{{- range $tenant := .Values.tenants }}
+---
+# Non-secret npm configuration. The npm-install-v1 task mounts this ConfigMap
+# as the `npmrc` workspace and copies it to a writable path. Kept identical to
+# the ConfigMap the shared chart used in tekton-pipelines.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: npm-npmrc
+  namespace: {{ $tenant.namespace }}
+data:
+  {{ $.Values.npmrc.filename | quote }}: |
+{{ $.Values.npmrc.content | trimSuffix "\n" | indent 4 }}
+{{- end }}

@@ -1,0 +1,25 @@
+helmDefaults:
+  createNamespace: true
+  wait: true
+  timeout: 900 # 15 minutes
+
+releases:
+  - name: cert-manager
+    namespace: cert-manager
+    chart: ./charts/upstream/cert-manager-v1.21.1.tgz
+    version: v1.21.1
+    labels:
+      stage: "upstream"
+    values:
+      - crds:
+          enabled: true
+
+  # Custom charts/kustomizations
+
+  - name: home-issuers
+    namespace: cert-manager
+    chart: ./kustomizations/home-issuers
+    labels:
+      stage: "issuers"
+    needs:
+      - cert-manager

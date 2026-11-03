@@ -1,0 +1,21 @@
+# Reserved for when a public domain is purchased: wildcard certificates via
+# Cloudflare DNS-01. Apply once `cloudflare-api-token-secret` exists in the
+# cert-manager namespace (Secret with key 'api-token').
+# DISABLED ON PURPOSE — domain does not exist yet.
+#
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: cloudflare-issuer
+# spec:
+#   acme:
+#     email: <TODO: your email>
+#     server: https://acme-v02.api.letsencrypt.org/directory
+#     privateKeySecretRef:
+#       name: cloudflare-issuer-account-key
+#     solvers:
+#       - dns01:
+#           cloudflare:
+#             apiTokenSecretRef:
+#               name: cloudflare-api-token-secret
+#               key: api-token

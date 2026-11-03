@@ -1,0 +1,120 @@
+# Cilium values for home-cluster-1.
+#
+# Platform: Talos Linux v1.13.9, Kubernetes v1.36.4, kube-proxy retained.
+# Basis: https://docs.siderolabs.com/kubernetes-guides/cni/deploying-cilium
+#        (the "With kube-proxy" variant) and the Cilium CNI ADR:
+#        wiki/architecture-decision-log/home/cilium-networkpolicy-adr.md
+#
+# The Talos machine config must carry `cluster.network.cni.name: none`
+# (platform/node/patches/cni-cilium.yaml) before this chart is installed,
+# otherwise Flannel and Cilium fight over /etc/cni/net.d.
+
+# Keep kube-proxy. The ADR deliberately scopes this change to the CNI and
+# policy enforcement, not the service data path.
+kubeProxyReplacement: false
+
+# Pod IPs come from kube-controller-manager (Talos podSubnets 10.244.0.0/16).
+# Cilium reads the per-node PodCIDR from the Node object.
+ipam:
+  mode: kubernetes
+
+k8s:
+  # Fail loudly if the node has no PodCIDR instead of falling back to a
+  # different allocator.
+  requireIPv4PodCIDR: true
+
+# VXLAN routing stays compatible with the existing 10.244.0.0/16 pod subnet.
+routingMode: tunnel
+tunnelProtocol: vxlan
+
+ipv4:
+  enabled: true
+ipv6:
+  enabled: false
+
+# Talos already mounts cgroupv2 and bpffs. Do not let Cilium mount them.
+cgroup:
+  autoMount:
+    enabled: false
+  hostRoot: /sys/fs/cgroup
+
+# Talos does not allow workloads to load kernel modules, so SYS_MODULE must be
+# dropped from the chart's default agent capability set. This is the exact
+# capability set from the official Talos Cilium guide.
+securityContext:
+  capabilities:
+    ciliumAgent:
+      - CHOWN
+      - KILL
+      - NET_ADMIN
+      - NET_RAW
+      - IPC_LOCK
+      - SYS_ADMIN
+      - SYS_RESOURCE
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    cleanCiliumState:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - SYS_RESOURCE
+
+# Talos enables forwardKubeDNSToHost by default and BPF masquerading breaks
+# CoreDNS with it. kube-proxy already does iptables masquerading, so keep BPF
+# masquerade off.
+bpf:
+  masquerade: false
+
+cni:
+  install: true
+  # Do not take exclusive ownership of /etc/cni/net.d. Istio ambient chains
+  # its CNI plugin into the existing configuration (home-istio); with
+  # exclusive: true Cilium rewrites the directory and deletes the istio-cni
+  # plugin, so ambient pods lose redirection. The Flannel migration that this
+  # switch originally protected against is long finished.
+  exclusive: false
+
+# MetalLB owns LoadBalancer IP allocation on this cluster. Keep Cilium's LB
+# IPAM off so two controllers cannot compete for the same Service.
+enableLBIPAM: false
+
+operator:
+  enabled: true
+  # One operator is enough for a four-node home cluster; it only allocates
+  # identities and manages CRDs.
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+# Agent resources: keep the data path responsive without reserving a large
+# slice of each node.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# Cilium 1.20 runs a per-node Envoy DaemonSet even without L7 policies. Give
+# it explicit requests so it is not the only unbounded workload in kube-system.
+envoy:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+# Optional observability is disabled to keep the base layer minimal. Enable
+# hubble.relay and hubble.ui separately if flow visibility is needed.
+hubble:
+  enabled: false
+  relay:
+    enabled: false
+  ui:
+    enabled: false

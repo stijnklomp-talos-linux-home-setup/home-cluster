@@ -1,0 +1,154 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: supergraph-configmap-v1
+  namespace: tekton-pipelines
+  labels:
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+  annotations:
+    tekton.dev/categories: "CI/CD"
+    tekton.dev/tags: "graphql,kubernetes,gitops"
+    tekton.dev/displayName: "Publish the supergraph ConfigMap"
+    tekton.dev/platforms: "linux/amd64,linux/arm64"
+spec:
+  description: >-
+    Publishes an already-composed supergraph SDL into the Hive Gateway
+    supergraph ConfigMap: it renders the ConfigMap manifest from the artifact
+    and `kubectl apply`s it. That is the same object and the same single data
+    key the Helm chart renders, so the gateway's mounted directory updates in
+    place and its polling function reads the new SDL on the next tick.
+
+    The ConfigMap must already exist: the `supergraph-release` ServiceAccount
+    has `get`/`update`/`patch` on that one object and no `create` permission,
+    so the gateway chart (or its ArgoCD Application) has to be installed first.
+
+    The write is a deliberate GitOps deviation: ArgoCD reports the gateway
+    ConfigMap OutOfSync after a release. The Task stamps provenance annotations
+    (`supergraph.home/released-at`, `-by`, `-sha256`) and the operator commits
+    the recomposed artifact afterwards. See the chart README, "GitOps
+    deviation".
+
+    The Pipeline runs this Task only after `supergraph-compose-v1` succeeds,
+    and the Task refuses an empty/missing artifact, so a failed composition
+    never reaches the cluster: Hive keeps serving the last good schema.
+    Runs as UID 65532 under Pod Security 'restricted'.
+  params:
+    - name: CONFIGMAP_NAME
+      description: Supergraph ConfigMap to update (must already exist)
+      type: string
+      default: {{ .Values.configMap.name }}
+    - name: CONFIGMAP_NAMESPACE
+      description: Namespace that owns the ConfigMap
+      type: string
+      default: {{ .Values.configMap.namespace }}
+    - name: FILENAME
+      description: Composed artifact file name inside the source workspace
+      type: string
+      default: supergraph.graphql
+    - name: SUBDIRECTORY
+      description: Subdirectory of the source workspace that holds the artifact
+      type: string
+      default: ""
+    - name: KEY
+      description: ConfigMap data key that holds the supergraph SDL
+      type: string
+      default: {{ .Values.configMap.key }}
+    - name: KUBECTL_IMAGE
+      description: Image with kubectl and bash
+      type: string
+      default: {{ .Values.images.kubectl }}
+  workspaces:
+    - name: source
+      description: Workspace of supergraph-compose-v1 that holds the composed artifact
+  results:
+    - name: configmap-sha256
+      description: SHA-256 of the content read back from the ConfigMap
+    - name: resource-version
+      description: resourceVersion of the ConfigMap after the update
+  steps:
+    - name: apply
+      image: $(params.KUBECTL_IMAGE)
+      env:
+        - name: HOME
+          value: /tmp
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        name="$(params.CONFIGMAP_NAME)"
+        namespace="$(params.CONFIGMAP_NAMESPACE)"
+        key="$(params.KEY)"
+
+        file="$(workspaces.source.path)"
+        if [ -n "$(params.SUBDIRECTORY)" ]; then
+          file="${file}/$(params.SUBDIRECTORY)"
+        fi
+        file="${file}/$(params.FILENAME)"
+        if [ ! -s "${file}" ]; then
+          echo "No composed supergraph to publish: ${file} is missing or empty" >&2
+          echo "Refusing to touch ${namespace}/${name}." >&2
+          exit 1
+        fi
+
+        if ! kubectl get configmap "${name}" --namespace "${namespace}" >/dev/null 2>&1; then
+          echo "ConfigMap ${namespace}/${name} does not exist (or is not readable)." >&2
+          echo "Install the gateway chart first: this Task only updates an existing ConfigMap." >&2
+          exit 1
+        fi
+
+        work="$(mktemp -d)"
+        trap 'rm -rf "${work}"' EXIT
+
+        # Render the manifest to a file, then apply that file. `set -e` alone
+        # does not fail a pipeline whose left-hand producer dies, so a
+        # `create | apply` one-liner could apply an empty manifest and still
+        # exit 0; a temp file removes the pipe entirely.
+        kubectl create configmap "${name}" \
+          --namespace "${namespace}" \
+          --from-file="${key}=${file}" \
+          --dry-run=client --save-config -o yaml \
+          > "${work}/configmap.yaml"
+        kubectl apply -f "${work}/configmap.yaml"
+
+        # Provenance for the operator reconciling the GitOps repo: ArgoCD now
+        # reports this object OutOfSync (README "GitOps deviation").
+        sha="$(sed 's/[[:space:]]*$//' "${file}" | sha256sum | cut -d' ' -f1)"
+        kubectl annotate configmap "${name}" --namespace "${namespace}" --overwrite \
+          "supergraph.home/released-by=tekton/supergraph-release-v1" \
+          "supergraph.home/released-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          "supergraph.home/sha256=${sha}" >/dev/null
+
+        # Read the object back and prove it carries the artifact we composed.
+        applied="${work}/applied"
+        jsonpath_key="$(printf '%s' "${key}" | sed 's/\./\\./g')"
+        kubectl get configmap "${name}" \
+          --namespace "${namespace}" \
+          -o "jsonpath={.data.${jsonpath_key}}" > "${applied}"
+
+        # jsonpath returns the stored string verbatim (no trailing newline);
+        # compare on trailing-whitespace-trimmed content so the file's final
+        # newline does not read as a difference.
+        expected="$(sed 's/[[:space:]]*$//' "${file}" | sha256sum | cut -d' ' -f1)"
+        actual="$(sed 's/[[:space:]]*$//' "${applied}" | sha256sum | cut -d' ' -f1)"
+        if [ "${expected}" != "${actual}" ]; then
+          echo "ConfigMap content does not match the composed artifact" >&2
+          echo "expected ${expected}, read back ${actual}" >&2
+          exit 1
+        fi
+
+        resource_version="$(kubectl get configmap "${name}" \
+          --namespace "${namespace}" \
+          -o jsonpath='{.metadata.resourceVersion}')"
+
+        printf '%s' "${actual}" > "$(results.configmap-sha256.path)"
+        printf '%s' "${resource_version}" > "$(results.resource-version.path)"
+        echo "Published ${namespace}/${name} (${key}), sha256 ${actual}, resourceVersion ${resource_version}"

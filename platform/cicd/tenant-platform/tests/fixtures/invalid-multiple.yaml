@@ -1,0 +1,15 @@
+# Several independent problems: the validator must report all of them in one
+# render failure, not stop at the first.
+tenants:
+  - owner: acme
+    namespace: acme
+    tier: sandbox
+    repos:
+      - name: widgets
+        url: https://github.com/acme/widgets
+      - name: widgets
+        url: https://github.com/acme/widgets-fork
+  - owner: other
+    namespace: acme
+    tier: deploy
+    repos: []

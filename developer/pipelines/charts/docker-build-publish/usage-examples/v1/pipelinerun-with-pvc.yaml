@@ -1,0 +1,99 @@
+# Rootless image build: build-push-v1 (Buildah, chroot isolation, vfs).
+# Copy to <app-repo>/.tekton/build.yaml and replace the TODO placeholders.
+# Requires the buildah-userns Localhost seccomp profile on every node; see
+# charts/docker-build-publish/README.md. Existing pipelines may keep using
+# kaniko-v1, which is now a deprecated alias of the same rootless task.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: devops-test-pipelines
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request, push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[*]"
+spec:
+  taskRunTemplate:
+    podTemplate:
+      securityContext:
+        # Every task in the shared catalog runs as UID/GID 65532; fsGroup makes
+        # the PVC writable by that identity across steps.
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+  params:
+    - name: repo-url
+      value: "{{ repo_url }}"
+    - name: revision
+      value: "{{ revision }}"
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ "ReadWriteOnce" ]
+          resources:
+            requests:
+              storage: 1Gi
+          storageClassName: longhorn
+    - name: basic-auth
+      secret:
+        secretName: "{{ git_auth_secret }}"
+    - name: npmrc
+      configMap:
+        name: npm-npmrc
+    - name: docker-credentials
+      secret:
+        secretName: ghcr-docker-config
+  pipelineSpec:
+    params:
+      - name: repo-url
+        type: string
+      - name: revision
+        type: string
+    workspaces:
+      - name: source
+      - name: basic-auth
+      - name: npmrc
+      - name: docker-credentials
+    tasks:
+      - name: clone
+        workspaces:
+          - name: output
+            workspace: source
+          - name: basic-auth
+            workspace: basic-auth
+        taskRef:
+          resolver: cluster
+          params:
+            - name: kind
+              value: task
+            - name: name
+              value: git-clone-v1
+            - name: namespace
+              value: tekton-pipelines
+        params:
+          - name: url
+            value: $(params.repo-url)
+          - name: revision
+            value: $(params.revision)
+      
+      - name: build-and-push-image
+        runAfter:
+          - clone
+        taskRef:
+          resolver: cluster
+          params:
+            - name: kind
+              value: task
+            - name: name
+              value: build-push-v1
+            - name: namespace
+              value: tekton-pipelines
+        workspaces:
+          - name: source
+            workspace: source
+          - name: dockerconfig
+            workspace: docker-credentials
+          - name: npmrc
+            workspace: npmrc
+        params:
+          - name: IMAGE
+            # TODO: replace with the real ghcr.io image name
+            value: "ghcr.io/<your-github-org>/service-name:latest"

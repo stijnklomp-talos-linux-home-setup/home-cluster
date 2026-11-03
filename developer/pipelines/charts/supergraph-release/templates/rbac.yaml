@@ -1,0 +1,53 @@
+# The one identity that may publish the supergraph. It lives in the namespace
+# that owns the ConfigMap (`configMap.namespace`), not in `tekton-pipelines`:
+# the shared catalog never renders a per-tenant ServiceAccount, and this one
+# can do exactly one thing — update the existing supergraph ConfigMap.
+#
+# There is deliberately no `create` verb: `create` cannot be scoped with
+# `resourceNames`, so granting it would allow writing any ConfigMap in the
+# namespace. The gateway chart owns the object, and the publisher pre-checks it.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.serviceAccount.name }}
+  namespace: {{ .Values.configMap.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.serviceAccount.name }}
+  namespace: {{ .Values.configMap.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+rules:
+  # Every verb is limited to the one supergraph ConfigMap. If the object is
+  # missing the publisher fails with "does not exist" instead of creating a
+  # second, unmanaged ConfigMap.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["{{ .Values.configMap.name }}"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.serviceAccount.name }}
+  namespace: {{ .Values.configMap.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.serviceAccount.name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name }}
+    namespace: {{ .Values.configMap.namespace }}

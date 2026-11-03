@@ -1,0 +1,9 @@
+# L2-only LoadBalancer. frrk8s (BGP) is not used.
+frrk8s:
+  enabled: false
+
+# Speakers announce the LB IPs; the CI node (Dell) runs only PipelineRuns and
+# the control plane stays kube-system only, so speakers run on the Lenovos.
+speaker:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""

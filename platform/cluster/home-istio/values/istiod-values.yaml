@@ -1,0 +1,30 @@
+# istiod for ambient mode. The ambient knobs are spelled out instead of
+# relying on `profile: ambient` so the switches are greppable and reviewable.
+#
+# Ambient mode is not on by default in a plain Helm install: istiod needs
+# PILOT_ENABLE_AMBIENT, and the data plane expects the HBONE metadata.
+
+meshConfig:
+  defaultConfig:
+    proxyMetadata:
+      # Tells the data plane to speak HBONE (HTTP/2 CONNECT over mTLS) to
+      # ztunnel instead of passing plaintext through.
+      ISTIO_META_ENABLE_HBONE: "true"
+
+pilot:
+  env:
+    PILOT_ENABLE_AMBIENT: "true"
+
+  # A single control plane is enough for four nodes and a handful of
+  # namespaces; an HPA on one replica only adds churn.
+  autoscaleEnabled: false
+  replicaCount: 1
+
+  # The chart default requests 500m CPU / 2Gi memory, a large slice of a home
+  # node for a control plane that mostly idles.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi

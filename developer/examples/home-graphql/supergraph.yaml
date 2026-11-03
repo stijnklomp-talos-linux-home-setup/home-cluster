@@ -1,0 +1,19 @@
+# Rover composition config — the only source of the supergraph.
+#
+# `routing_url` points at the in-cluster Service DNS name, never a LAN address
+# or an edge route, so Hive reaches the subgraph through ambient mTLS.
+# `federation_version` is pinned exactly: an implicit upgrade changes the
+# composed SDL without a git diff. Keep it in step with the note in README.md.
+federation_version: =2.9.3
+
+subgraphs:
+  users:
+    routing_url: http://home-users.home-users.svc.cluster.local/graphql
+    schema:
+      file: schemas/users.graphql
+  # orders references User by key; the query planner resolves the entity in
+  # the users subgraph. `schemas/orders.graphql` is the live `_service { sdl }`.
+  orders:
+    routing_url: http://home-orders.home-orders.svc.cluster.local/graphql
+    schema:
+      file: schemas/orders.graphql

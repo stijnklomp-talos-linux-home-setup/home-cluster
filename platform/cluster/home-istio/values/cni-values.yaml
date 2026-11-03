@@ -1,0 +1,26 @@
+# Istio CNI node agent. It runs as a chained CNI plugin inside the existing
+# Cilium configuration (Cilium `cni.exclusive: false`) and installs the
+# iptables rules that redirect ambient pod traffic to ztunnel.
+#
+# `ambient.enabled` is the one switch the chart does not derive on its own in
+# a plain Helm install; without it the agent only does sidecar injection
+# plumbing and never enrolls ambient pods.
+
+ambient:
+  enabled: true
+  # Namespace-level opt-in is the model here: ambient workloads are selected
+  # by the `istio.io/dataplane-mode: ambient` label on the namespace, never by
+  # labelling individual pods.
+
+# The chart default already excludes kube-system, where Cilium and the
+# control plane run and must not be redirected.
+excludeNamespaces:
+  - kube-system
+
+# The node agent is a DaemonSet on every node; keep its footprint small.
+resources:
+  requests:
+    cpu: 50m
+    memory: 100Mi
+  limits:
+    memory: 256Mi

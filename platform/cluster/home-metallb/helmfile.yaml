@@ -1,0 +1,33 @@
+# MetalLB speaker needs hostNetwork + NET_ADMIN/NET_RAW — exempt from the
+# cluster-wide baseline PodSecurity profile (see Talos admissionControl).
+
+helmDefaults:
+  createNamespace: true
+  wait: true
+  timeout: 900 # 15 minutes
+
+releases:
+  - name: metallb
+    namespace: metallb-system
+    chart: ./charts/upstream/metallb-0.16.1.tgz
+    version: 0.16.1
+    values:
+      - ./values/metallb-values.yaml
+    labels:
+      stage: "upstream"
+    hooks:
+      # Apply the privileged-PSA namespace label before the chart installs,
+      # otherwise the speaker pods are rejected by PodSecurity.
+      - events: ["presync"]
+        kubectlApply:
+          filename: kustomizations/metallb-ns/namespace.yaml
+
+  # Custom charts/kustomizations
+
+  - name: metallb-config
+    namespace: metallb-system
+    chart: ./kustomizations/metallb-config
+    labels:
+      stage: "config"
+    needs:
+      - metallb

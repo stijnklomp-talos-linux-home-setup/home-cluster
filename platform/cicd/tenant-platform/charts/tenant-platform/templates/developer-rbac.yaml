@@ -1,0 +1,43 @@
+{{- $uniqueDevelopers := include "tenant-platform.uniqueDevelopers" . }}
+{{- range $tenant := .Values.tenants }}
+{{- range $email := ($tenant.developers | default list) }}
+{{- $slug := include "tenant-platform.developerSlug" (toString $email) }}
+---
+# Read-only visibility for a tenant developer inside their own namespace.
+# `tekton-developer` is a cluster-scoped ClusterRole owned by the SSO/RBAC
+# repository (ticket #6); this chart owns only the per-namespace binding.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tekton-developer-{{ $slug }}
+  namespace: {{ $tenant.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-developer
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: {{ $email | quote }}
+{{- end }}
+{{- end }}
+{{- if $uniqueDevelopers }}
+{{- range $email := (splitList "," $uniqueDevelopers) }}
+{{- $slug := include "tenant-platform.developerSlug" $email }}
+---
+# One cluster-scoped binding per unique developer, so a developer in two
+# tenants can list namespace names (the dashboard dropdown) exactly once.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tekton-namespace-lister-{{ $slug }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-namespace-lister
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: {{ $email | quote }}
+{{- end }}
+{{- end }}

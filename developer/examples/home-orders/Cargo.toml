@@ -1,0 +1,114 @@
+[package]
+name = "home-orders"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "home-orders: REST + optional Federated GraphQL orders subgraph"
+license = "MIT"
+# `cargo run` (and bacon) start the service app; the other binaries are run
+# explicitly (`--bin openapi`, `--bin db_seed`).
+default-run = "home-orders"
+
+[dependencies]
+# Optional Apollo Federation v2 subgraph (feature `graphql`), see
+# docs/adr/0011-optional-graphql-federation.md.
+async-graphql = { version = "7.2.1", default-features = false, features = ["dataloader"], optional = true }
+async-graphql-axum = { version = "7.2.1", optional = true }
+axum = "0.8.9"
+axum-valid = { version = "0.25.0", default-features = false, features = ["garde", "basic"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+dotenvy = "0.15.7"
+futures-lite = "2.6.1"
+garde = { version = "0.23.0", features = ["derive"] }
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["aws_lc_rs", "use_pem"], optional = true }
+lapin = "4.12.2"
+redis = { version = "1.7.1", default-features = false, features = ["tokio-comp"] }
+# One rustls crypto provider for the whole graph (`aws-lc-rs`, the same backend
+# `jsonwebtoken` uses); reqwest picks it without a process-global install.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"], optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.9.0", features = ["chrono", "postgres", "runtime-tokio", "tls-rustls-aws-lc-rs", "macros", "migrate"] }
+utoipa = { version = "6.0.0", features = ["chrono", "yaml"] }
+utoipa-axum = "0.3.0"
+thiserror = "2.0.21"
+tokio = { version = "1.53.3", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.1", features = [
+    "compression-br",
+    "compression-gzip",
+    "cors",
+    "limit",
+    "request-id",
+    "sensitive-headers",
+    "timeout",
+    "trace",
+] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["json"] }
+
+[features]
+# Optional Apollo Federation v2 subgraph at `/graphql` (ADR-0011). The default
+# build has no GraphQL code or dependencies; `GRAPHQL_ENABLED=false` turns the
+# endpoint off again for a build that has the feature.
+graphql = [
+    "dep:async-graphql",
+    "dep:async-graphql-axum",
+    "dep:jsonwebtoken",
+    "dep:reqwest",
+]
+# The acceptance test target (`tests/acceptance/`, profile `acceptance`) needs
+# real Postgres/Valkey/RabbitMQ from compose. It is behind this feature so the
+# default suite (`just test`, plain `cargo test`) never builds or runs it and
+# needs no infrastructure.
+acceptance = []
+# Runs `tests/pact/*` via `just test-pact`: the provider test boots the app on
+# an ephemeral port against a real Postgres. Kept out of the default `cargo test`.
+pact = []
+
+[dev-dependencies]
+# Pact contract tests (ADR-0008): the consumer example in `tests/pact/`
+# generates the checked-in contracts; the provider test verifies them against
+# the real app. `reqwest` is the same build the pact crates use.
+async-trait = "0.1"
+anyhow = "1"
+axum-test = "21.1.0"
+pact_consumer = "1.4.10"
+pact_models = "1.3.16"
+pact_verifier = "1.4.7"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+# Test-only: forces a deterministic callsite interest rebuild for log capture.
+tracing-core = "0.1.36"
+
+# The acceptance suite (compose `test`/`acceptance` profiles; see
+# `.config/nextest.toml`).
+[[test]]
+name = "acceptance"
+path = "tests/acceptance/main.rs"
+required-features = ["acceptance"]
+
+[[test]]
+name = "graphql"
+path = "tests/graphql.rs"
+required-features = ["graphql"]
+
+[[test]]
+name = "pact_consumer"
+path = "tests/pact/consumer.rs"
+required-features = ["pact"]
+
+[[test]]
+name = "pact_provider"
+path = "tests/pact/provider.rs"
+required-features = ["pact"]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

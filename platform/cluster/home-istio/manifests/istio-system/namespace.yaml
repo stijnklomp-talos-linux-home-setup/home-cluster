@@ -1,0 +1,18 @@
+# The Talos cluster enforces PodSecurity `baseline` cluster-wide and exempts
+# only kube-system. ztunnel (NET_ADMIN, SYS_ADMIN), the Istio CNI agent (same)
+# and istiod's webhook are not baseline-compliant, exactly like Cilium and
+# MetalLB. Opt this one namespace out instead of weakening the cluster default.
+#
+# Applied as a presync hook of the istio-base release, before any Istio pod is
+# scheduled (see helmfile.yaml).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: privileged
+    pod-security.kubernetes.io/warn-version: latest

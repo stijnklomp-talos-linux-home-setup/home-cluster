@@ -1,0 +1,13 @@
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: home-lan
+  namespace: metallb-system
+spec:
+  # TODO: router admin — shrink the DHCP address range to end before .200
+  # (e.g. .100-.199) so MetalLB's pool can't collide with a DHCP lease.
+  # Keep static reservations for the 4 Talos nodes (.106-.109); the LB IP
+  # itself needs no reservation (MetalLB announces it via ARP).
+  addresses:
+    - 192.168.1.200-192.168.1.230
+  autoAssign: true

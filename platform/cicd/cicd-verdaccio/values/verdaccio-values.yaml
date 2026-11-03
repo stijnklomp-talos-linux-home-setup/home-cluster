@@ -1,0 +1,111 @@
+# Cache-only NPM registry: read-through proxy of registry.npmjs.org for Tekton
+# TaskRuns. No publishing, no auth — pods reach it in-cluster via
+# http://verdaccio.verdaccio.svc.cluster.local:4873.
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 4873
+
+persistence:
+  enabled: true
+  storageClass: longhorn
+  accessMode: ReadWriteOnce
+  size: 20Gi
+
+# Override the default config: anonymous read + npmjs uplink only.
+configMap: |
+  storage: /verdaccio/storage/data
+
+  web:
+    title: Verdaccio (npm cache)
+
+  auth:
+    htpasswd:
+      file: /verdaccio/storage/htpasswd
+      max_users: -1 # no registration
+
+  uplinks:
+    npmjs:
+      url: https://registry.npmjs.org/
+      max_fails: 5
+      maxage: 30m
+      timeout: 30s
+      agent_options:
+        keepAlive: true
+        maxSockets: 40
+        maxFreeSockets: 10
+
+  packages:
+    '@*/*':
+      access: $all
+      publish: $all # blocked in practice (no authenticated users)
+      proxy: npmjs
+    '**':
+      access: $all
+      publish: $all
+      proxy: npmjs
+
+  middlewares:
+    audit:
+      enabled: true
+
+  log:
+    type: stdout
+    format: pretty
+    level: info
+
+# Cache TTL: cached packages older than 90 days are deleted twice a day so
+# storage is freed after ~3 months. Runs on the Verdaccio node (PVC is
+# ReadWriteOnce). Deleted entries are simply re-fetched from the npmjs uplink
+# on demand.
+extraManifests:
+  - apiVersion: batch/v1
+    kind: CronJob
+    metadata:
+      name: verdaccio-cache-evict
+      namespace: verdaccio
+    spec:
+      schedule: "0 */12 * * *"
+      concurrencyPolicy: Forbid
+      jobTemplate:
+        spec:
+          backoffLimit: 2
+          ttlSecondsAfterFinished: 3600
+          template:
+            spec:
+              restartPolicy: OnFailure
+              affinity:
+                podAffinity:
+                  requiredDuringSchedulingIgnoredDuringExecution:
+                    - labelSelector:
+                        matchLabels:
+                          app.kubernetes.io/name: verdaccio
+                      topologyKey: kubernetes.io/hostname
+              containers:
+                - name: evict
+                  image: busybox:1.36
+                  imagePullPolicy: IfNotPresent
+                  securityContext:
+                    runAsNonRoot: true
+                    runAsUser: 101 # verdaccio user (owns the PVC files)
+                    runAsGroup: 101
+                    allowPrivilegeEscalation: false
+                    seccompProfile:
+                      type: RuntimeDefault
+                    capabilities:
+                      drop: ["ALL"]
+                  command:
+                    - /bin/sh
+                    - -ec
+                    - |
+                      find /verdaccio/storage/data -type f -mtime +90 -delete
+                      find /verdaccio/storage/data -type d -empty -delete
+                      echo "cache evicted (files >90 days old)"
+                  volumeMounts:
+                    - name: data
+                      mountPath: /verdaccio/storage
+              volumes:
+                - name: data
+                  persistentVolumeClaim:
+                    claimName: verdaccio

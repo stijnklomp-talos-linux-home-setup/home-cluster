@@ -1,0 +1,84 @@
+# Defaults for the tenant-platform chart.
+#
+# The registry (../values/tenants.yaml at the component root) is layered on top
+# by helmfile and defines `tenants` only. Everything here is platform
+# configuration; override it per tenant in the registry (`quota`,
+# `limitRange`) or per release in the helmfile.
+#
+# Tiers (wiki/cicd/pipelines/tenancy/spec.md):
+#   build  - external tenants: no deploy credentials, no Kubernetes API egress
+#   deploy - operator-controlled tenants: API egress for the GitOps path
+
+verdaccio:
+  namespace: verdaccio
+  port: 4873
+
+npmrc:
+  # Keep the body identical to the ConfigMap the shared npm-install chart used
+  # in tekton-pipelines (read from the live cluster on 2026-10-24). The
+  # npm-install-v1 task mounts this ConfigMap as its `npmrc` workspace.
+  filename: .npmrc
+  content: |
+    # Cache-only private registry (cicd-verdaccio) proxying registry.npmjs.org.
+    # No credentials needed for public packages.
+    registry=http://verdaccio.verdaccio.svc.cluster.local:4873/
+
+# Per-tier ResourceQuota. The LimitRange defaults below must fit inside these
+# values for a single container, otherwise a PipelineRun fails to create its
+# pod with a quota error instead of a useful message.
+tiers:
+  build:
+    quota:
+      "requests.cpu": "4"
+      "limits.cpu": "8"
+      "requests.memory": 8Gi
+      "limits.memory": 16Gi
+      "requests.ephemeral-storage": 10Gi
+      "limits.ephemeral-storage": 20Gi
+      "pods": "20"
+      "persistentvolumeclaims": "4"
+      "requests.storage": 40Gi
+    limitRange:
+      default:
+        cpu: "2"
+        memory: 2Gi
+        ephemeral-storage: 5Gi
+      defaultRequest:
+        cpu: 200m
+        memory: 256Mi
+        ephemeral-storage: 1Gi
+  deploy:
+    quota:
+      "requests.cpu": "8"
+      "limits.cpu": "16"
+      "requests.memory": 16Gi
+      "limits.memory": 32Gi
+      "requests.ephemeral-storage": 20Gi
+      "limits.ephemeral-storage": 40Gi
+      "pods": "40"
+      "persistentvolumeclaims": "8"
+      "requests.storage": 100Gi
+    limitRange:
+      default:
+        cpu: "4"
+        memory: 4Gi
+        ephemeral-storage: 10Gi
+      defaultRequest:
+        cpu: 250m
+        memory: 512Mi
+        ephemeral-storage: 1Gi
+
+pruner:
+  # Pinned to the cluster's kubectl minor. The design named bitnami/kubectl, but
+  # Bitnami no longer publishes version tags on `bitnami/kubectl` (versioned
+  # tags moved to the frozen `bitnamilegacy` repository); alpine/kubectl is the
+  # maintained equivalent and ships the shell the prune script needs. The image
+  # runs as 65532 with a read-only rootfs.
+  image: docker.io/alpine/kubectl:1.36.4
+  serviceAccount:
+    name: tenant-platform-pruner
+    namespace: tekton-pipelines
+  # An empty registry is almost always a mistake (a bad merge or a partial
+  # values file). The pruner refuses to delete anything unless this is true,
+  # so `tenants: []` cannot silently wipe every tenant namespace.
+  allowEmptyRegistry: false

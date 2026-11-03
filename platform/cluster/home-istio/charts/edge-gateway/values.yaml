@@ -1,0 +1,42 @@
+# Production edge Gateway (ticket #12). Replaces ingress-nginx for the four
+# cluster UIs and Pinniped. The committed defaults are TEST-NET-1
+# documentation values so the chart renders harmlessly; the live run passes
+# the real address and host suffix through helmfile-edge.yaml.gotmpl:
+#
+#   EDGE_LB_IP        existing MetalLB address (the one ingress-nginx used)
+#   EDGE_HOST_SUFFIX  sslip.io suffix, i.e. <lb-ip>.sslip.io
+#
+# Nothing in this file (or the chart) may contain the real LAN address.
+lbIP: "192.0.2.10"
+hostSuffix: "192.0.2.10.sslip.io"
+
+# Hostname prefixes. Keep them identical to the pre-cutover Ingress hosts:
+# Cognito callback URLs, the ArgoCD URL and the Pinniped kubeconfig embed
+# them and must keep working unchanged.
+hosts:
+  argocd: argocd
+  tekton: tekton
+  pipelinesAsCode: pipelines-as-code
+  login: login
+  kubectl: kubectl
+
+# One multi-SAN certificate for the three HTTPS-terminated hosts. The
+# cert-manager Gateway shim is not enabled on this cluster, so the
+# Certificate is explicit; Pinniped's passthrough hosts serve their own
+# certificates.
+certificate:
+  name: internal-tls
+  secretName: internal-tls
+  issuerKind: ClusterIssuer
+  issuerName: home-issuer
+
+# Route admission is namespace-scoped: only namespaces carrying this label
+# may attach routes. Tenant namespaces must never get it.
+routeLabel:
+  key: istio.io/edge-route
+  value: enabled
+
+# The generated gateway pod joins the ambient mesh so ztunnel originates
+# HBONE/mTLS to meshed backends. Namespace labels alone do not enrol the
+# gateway pod (Istio sets dataplane-mode: none unless overridden here).
+ambient: true

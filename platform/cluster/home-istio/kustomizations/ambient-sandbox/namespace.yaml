@@ -1,0 +1,157 @@
+# Sandbox proof for ambient mTLS (ticket #10). Nothing here is part of a
+# production route; it can be removed with `helmfile -l stage=sandbox destroy`
+# once the mesh is trusted.
+#
+# `istio.io/dataplane-mode: ambient` is the only enrollment switch: ztunnel
+# and the Istio CNI agent watch this namespace label, and every pod created
+# here afterwards is redirected into the mesh. The `-nomesh` namespace next to
+# this one deliberately omits it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ambient-sandbox
+  labels:
+    istio.io/dataplane-mode: ambient
+    # The workloads run as non-root with all capabilities dropped; baseline is
+    # the strictest profile that still allows the images' entrypoints.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# STRICT is what makes the success meaningful: ztunnel rejects plaintext
+# inbound connections to these pods, so the in-mesh client can only succeed
+# because ztunnel originates mTLS on its behalf. Umbrella the whole namespace;
+# ambient has no per-port mTLS.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: ambient-sandbox
+spec:
+  mtls:
+    mode: STRICT
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: server
+  namespace: ambient-sandbox
+  labels:
+    app: ambient-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ambient-server
+  template:
+    metadata:
+      labels:
+        app: ambient-server
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nginx
+          # Unprivileged variant: listens on :8080, no root, no added caps.
+          image: nginxinc/nginx-unprivileged:1.29-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            # exec, not httpGet: kubelet HTTP probes are SNAT-ed to
+            # 169.254.7.127 and would depend on the ambient probe policy.
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - wget -q -O /dev/null http://127.0.0.1:8080/
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: server
+  namespace: ambient-sandbox
+spec:
+  selector:
+    app: ambient-server
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: curl-client
+  namespace: ambient-sandbox
+  labels:
+    app: ambient-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ambient-client
+  template:
+    metadata:
+      labels:
+        app: ambient-client
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: curl
+          image: curlimages/curl:8.23.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - sleep
+            - infinity
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "true"
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

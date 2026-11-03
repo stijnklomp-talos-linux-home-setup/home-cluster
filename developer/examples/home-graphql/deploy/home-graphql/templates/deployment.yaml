@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "home-graphql.fullname" . }}
+  labels:
+    {{- include "home-graphql.labels" . | nindent 4 }}
+spec:
+  # One replica, no PDB: at this scale a PDB cannot provide availability and
+  # would only block node drains (ADR service-networking, "Why one replica").
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "home-graphql.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "home-graphql.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: gateway
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # The image has no CMD: the entrypoint is dumb-init + node bin.mjs.
+          args:
+            - supergraph
+            - -c
+            - /gateway/config/gateway.config.mjs
+          ports:
+            - name: http
+              containerPort: 4000
+          env:
+            - name: SUPERGRAPH_PATH
+              value: {{ .Values.config.supergraphPath | quote }}
+            - name: JWT_ISSUER
+              value: {{ .Values.config.jwtIssuer | quote }}
+            - name: JWT_AUDIENCE
+              value: {{ .Values.config.jwtAudience | quote }}
+            - name: JWT_CLIENT_ID
+              value: {{ .Values.config.jwtClientId | quote }}
+            - name: JWKS_URI
+              value: {{ .Values.config.jwksUri | quote }}
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            # Directory mounts only: the kubelet swaps the ConfigMap symlink,
+            # and the 10 s poll opens the file afresh through it.
+            - name: gateway-config
+              mountPath: /gateway/config
+              readOnly: true
+            - name: supergraph
+              mountPath: /gateway/supergraph
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: gateway-config
+          configMap:
+            name: {{ include "home-graphql.fullname" . }}-config
+        - name: supergraph
+          configMap:
+            name: {{ include "home-graphql.fullname" . }}-supergraph
+        - name: tmp
+          emptyDir: {}

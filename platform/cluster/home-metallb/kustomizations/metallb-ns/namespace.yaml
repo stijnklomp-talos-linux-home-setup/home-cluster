@@ -1,0 +1,11 @@
+# MetalLB speaker needs hostNetwork + NET_ADMIN/NET_RAW — exempt from the
+# cluster-wide baseline PodSecurity profile (see Talos admissionControl).
+# Applied by a helmfile presync hook before the upstream chart installs.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: metallb-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged

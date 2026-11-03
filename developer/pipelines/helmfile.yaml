@@ -1,0 +1,65 @@
+helmDefaults:
+  createNamespace: false
+  wait: true
+  timeout: 900 # 15 minutes
+
+releases:
+  # Custom charts/kustomizations
+  #
+  # No tekton-bot release: the shared catalog renders Tasks/Pipelines only.
+  # tenant-platform owns the per-tenant `tekton-bot` ServiceAccount.
+
+  - name: cicd-tekton-git-clone
+    chart: ./charts/git-clone
+    labels:
+      stage: "git-clone"
+
+  - name: cicd-tekton-npm-install
+    chart: ./charts/npm-install
+    labels:
+      stage: "npm-install"
+
+  - name: cicd-tekton-npm-install-secrets
+    chart: ./charts/npm-install-secrets
+    labels:
+      stage: "npm-install-secrets"
+
+  - name: cicd-tekton-docker-build-publish
+    chart: ./charts/docker-build-publish
+    labels:
+      stage: "docker-build-publish"
+
+  - name: cicd-tekton-docker-build-publish-secrets
+    chart: ./charts/docker-build-publish-secrets
+    labels:
+      stage: "docker-build-publish-secrets"
+
+  - name: cicd-tekton-gitops-yaml-bump
+    chart: ./charts/gitops-yaml-bump
+    labels:
+      stage: "gitops-yaml-bump"
+
+  - name: cicd-tekton-gitops-yaml-bump-secrets
+    chart: ./charts/gitops-yaml-bump-secrets
+    labels:
+      stage: "gitops-yaml-bump-secrets"
+
+  - name: cicd-tekton-app-release
+    chart: ./charts/app-release
+    labels:
+      stage: "app-release"
+
+  - name: cicd-tekton-supergraph-release
+    chart: ./charts/supergraph-release
+    labels:
+      stage: "supergraph-release"
+
+  - name: cicd-tekton-terragrunt
+    chart: ./charts/terragrunt
+    labels:
+      stage: "terragrunt"
+
+  - name: cicd-tekton-terragrunt-secrets
+    chart: ./charts/terragrunt-secrets
+    labels:
+      stage: "terragrunt-secrets"

@@ -1,0 +1,110 @@
+# Live acceptance test for the deploy tenant (ticket #5).
+#
+# This is NOT applied by the chart. It proves, from inside the operator org
+# tenant namespace, that:
+#   - a PipelineRun can run under `restricted` Pod Security;
+#   - the deploy tier's Cilium egress policy allows the Kubernetes API server
+#     (any HTTP response, including 401/403, proves network reachability);
+#   - cluster DNS, Verdaccio and the public internet stay reachable.
+#
+# One inline task only: no shared task, no PVC and no git clone, so the test
+# does not depend on the catalog or on GitHub availability.
+#
+# Run (after the tenant platform and shared charts are applied):
+#
+#   kubectl delete pipelinerun -n stijnklomp-talos-linux-home-setup \
+#     deploy-tenant-acceptance --ignore-not-found
+#   kubectl apply -f tenant-platform/tests/deploy-tenant-pipelinerun.yaml
+#   kubectl wait --for=condition=Succeeded --timeout=20m \
+#     -n stijnklomp-talos-linux-home-setup pipelinerun/deploy-tenant-acceptance
+#   kubectl logs -n stijnklomp-talos-linux-home-setup \
+#     -l tekton.dev/pipelineRun=deploy-tenant-acceptance --all-containers --prefix
+#
+# The probe exits non-zero on any mismatch, so the PipelineRun itself is the
+# assertion.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: deploy-tenant-acceptance
+  namespace: stijnklomp-talos-linux-home-setup
+  labels:
+    app.kubernetes.io/part-of: tenant-platform
+    home.cluster/acceptance: "true"
+spec:
+  taskRunTemplate:
+    serviceAccountName: tekton-bot
+    podTemplate:
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+  pipelineSpec:
+    tasks:
+      - name: network-probe
+        taskSpec:
+          steps:
+            - name: probe
+              # Same probe image as the build-tenant acceptance test.
+              image: docker.io/curlimages/curl:8.23.0
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                seccompProfile:
+                  type: RuntimeDefault
+              env:
+                - name: API_URL
+                  value: https://kubernetes.default.svc/
+                - name: VERDACCIO_URL
+                  value: http://verdaccio.verdaccio.svc.cluster.local:4873/-/ping
+                - name: INTERNET_URL
+                  value: https://registry.npmjs.org/
+              script: |
+                #!/bin/sh
+                set -eu
+
+                failures=0
+
+                pass() { echo "PASS: $*"; }
+                fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
+
+                expect_http() {
+                  label="$1"
+                  url="$2"
+                  if curl -fsS -o /dev/null --connect-timeout 5 --max-time 20 "$url"; then
+                    pass "$label reachable ($url)"
+                  else
+                    fail "$label NOT reachable ($url)"
+                  fi
+                }
+
+                echo "=== deploy tier allowed egress ==="
+                # The API server rejects an unauthenticated request with 401 or
+                # 403; any 3-digit status means the TCP/TLS path is open.
+                api_code="$(curl -ksS -o /dev/null -w '%{http_code}' \
+                  --connect-timeout 5 --max-time 20 "$API_URL" || true)"
+                case "$api_code" in
+                  [1-5][0-9][0-9])
+                    pass "Kubernetes API reachable ($API_URL -> HTTP $api_code)"
+                    ;;
+                  *)
+                    fail "Kubernetes API NOT reachable ($API_URL -> '${api_code:-no response}')"
+                    ;;
+                esac
+
+                if getent hosts verdaccio.verdaccio.svc.cluster.local >/dev/null 2>&1; then
+                  pass "cluster DNS resolves verdaccio.verdaccio.svc.cluster.local"
+                else
+                  fail "cluster DNS does not resolve verdaccio.verdaccio.svc.cluster.local"
+                fi
+                expect_http "Verdaccio" "$VERDACCIO_URL"
+                expect_http "internet" "$INTERNET_URL"
+
+                if [ "$failures" -ne 0 ]; then
+                  echo "$failures network assertion(s) failed"
+                  exit 1
+                fi
+                echo "all deploy-tier network assertions passed"

@@ -1,0 +1,26 @@
+{{- if .Values.source.pvc.create }}
+# The source workspace of the supergraph-release Pipeline: the seeded
+# home-graphql checkout, the composed artifact and Rover's plugin cache.
+#
+# It must outlive a single PipelineRun: compose and publish are separate
+# TaskRuns (one PVC per PipelineRun would still work for them), but the Rover
+# plugin cache in `$HOME/.rover` is only worth keeping across runs. It is
+# therefore a chart-owned PVC instead of a per-run `volumeClaimTemplate`.
+#
+# It holds only regenerable data: delete and re-run the pipeline to reset it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.source.pvc.name }}
+  namespace: {{ .Values.configMap.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: {{ .Values.source.pvc.storageClassName }}
+  resources:
+    requests:
+      storage: {{ .Values.source.pvc.size }}
+{{- end }}

@@ -1,0 +1,8 @@
+# Verification overlay: points the service at the in-cluster test JWKS server
+# (the public half of tests/fixtures/graphql-test-key.pem). The test tokens use
+# the Cognito *access-token* shape: no `aud`, a `client_id` claim instead.
+# Use only for the live JWT-path verification; production points at Cognito.
+testJwks:
+  enabled: true
+  audience: ""
+  clientId: home-test-client

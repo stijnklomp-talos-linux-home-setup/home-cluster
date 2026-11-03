@@ -1,0 +1,36 @@
+# Production edge Gateway (ticket #12) — the permanent replacement for
+# ingress-nginx. Separate from `helmfile.yaml` because the Gateway needs the
+# real MetalLB address and host suffix, which must never be committed to the
+# public repo. TEST-NET-1 defaults keep `template`/`lint` offline-safe.
+#
+#   EDGE_LB_IP=...          existing MetalLB address (ingress-nginx's old one)
+#   EDGE_HOST_SUFFIX=...    sslip.io suffix, i.e. <lb-ip>.sslip.io
+#
+# Apply / inspect / update:
+#   EDGE_LB_IP=... EDGE_HOST_SUFFIX=... helmfile -f helmfile-edge.yaml.gotmpl apply
+#   helmfile -f helmfile-edge.yaml.gotmpl template
+#
+# The chart creates the Gateway `istio-internal`, its multi-SAN Certificate,
+# and the HTTP->HTTPS redirect route. The per-service HTTPRoutes/TLSRoutes live
+# in the repos that own their namespaces (cicd-argocd, cicd-tekton-pipelines-
+# as-code, home-sso-auth-rbac).
+#
+# The presync hook labels the route namespaces. It uses kubectl (not a Helm
+# release) so it can adopt namespaces created by other components without
+# Helm ownership conflicts.
+helmDefaults:
+  createNamespace: true
+  wait: true
+  timeout: 600 # 10 minutes; the gateway image pulls on first use
+
+releases:
+  - name: edge-gateway
+    namespace: istio-ingress
+    chart: ./charts/edge-gateway
+    values:
+      - lbIP: {{ env "EDGE_LB_IP" | default "192.0.2.10" | quote }}
+        hostSuffix: {{ env "EDGE_HOST_SUFFIX" | default "192.0.2.10.sslip.io" | quote }}
+    hooks:
+      - events: ["presync"]
+        kubectlApply:
+          filename: kustomizations/edge-route-namespaces/namespaces.yaml

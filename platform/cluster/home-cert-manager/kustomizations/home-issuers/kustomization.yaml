@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - root-ca.yaml
+  - root-ca-certificate.yaml
+  - home-issuer.yaml
+  # cloudflare-issuer.yaml is intentionally NOT included yet (no domain).
+  # Add it to resources when a domain + Cloudflare API token exist.

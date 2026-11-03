@@ -1,0 +1,14 @@
+# Live cluster credentials. The real checkout is a sibling directory
+# (../home-cluster-1-config); this entry is defence in depth so it can never be
+# committed from inside the repo either.
+home-cluster-1-config/
+
+# Terraform / Terragrunt state and caches
+*.tfstate
+*.tfstate.*
+.terragrunt-cache/
+.terraform/
+
+# Local tooling
+.build/
+__pycache__/

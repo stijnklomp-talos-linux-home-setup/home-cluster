@@ -1,0 +1,14 @@
+# ztunnel is the per-node L4 proxy that terminates ambient mTLS and forwards
+# HBONE to the destination. One DaemonSet; istiod supplies its certificate
+# (SPIFFE identity in the cluster trust domain) and policy.
+#
+# The chart defaults ask for 200m CPU / 512Mi memory per node, which is sized
+# for a much larger cluster. A home cluster of four nodes and a handful of
+# namespaces fits in a quarter of that.
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 512Mi

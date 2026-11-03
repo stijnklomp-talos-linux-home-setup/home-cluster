@@ -1,0 +1,6 @@
+apiVersion: v2
+name: gitops-yaml-bump-secrets
+description: Secrets for the gitops-yaml-bump task
+type: application
+version: 0.1.0
+appVersion: 1.0.0

@@ -1,0 +1,9 @@
+tenants:
+  - owner: acme
+    namespace: acme
+    tier: build
+    repos:
+      - name: widgets
+        url: https://github.com/acme/widgets
+      - name: widgets
+        url: https://github.com/acme/widgets-fork

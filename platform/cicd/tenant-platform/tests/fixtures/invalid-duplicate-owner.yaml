@@ -1,0 +1,10 @@
+# Owner uniqueness is case-insensitive: GitHub logins are.
+tenants:
+  - owner: acme
+    namespace: acme-one
+    tier: build
+    repos: []
+  - owner: ACME
+    namespace: acme-two
+    tier: build
+    repos: []

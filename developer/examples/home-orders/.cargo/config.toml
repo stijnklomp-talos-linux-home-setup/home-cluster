@@ -1,0 +1,8 @@
+# sqlx macros resolve against the committed `.sqlx` offline cache, never a live
+# database (ADR-0003), so `cargo build`/`cargo test` work with no Postgres even
+# when DATABASE_URL is exported. A real process environment wins — cargo only
+# fills this in when the variable is unset — and the database-facing recipes
+# (`just migrate`, `just db-reset`, `just sqlx-prepare`, `just sqlx-check`)
+# override it with SQLX_OFFLINE=false.
+[env]
+SQLX_OFFLINE = "true"

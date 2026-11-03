@@ -1,0 +1,29 @@
+# home-cluster — the monorepo. Declarations live in developer/apps/baremetal/;
+# app charts live in developer/examples/<app>/deploy/<app>. One declaration per
+# (service, target cluster); the apps-baremetal ApplicationSet generates
+# home-cluster apps' -dev / -staging / -prod from this file.
+#
+# Keys are flat on purpose: the ApplicationSet git file generator flattens
+# nested YAML and the gitops-yaml-bump task edits these keys by name. CI owns
+# targetRevision<Env>/imageTag<Env>; do not rename keys without updating the
+# pipelines.
+# SINGLE-ENVIRONMENT DECLARATION. The gateway chart, composed supergraph and
+# the subgraph Cilium policies use the fixed namespaces `home-graphql`,
+# `home-users` and `home-orders`, while this ApplicationSet generates
+# `<app>-<env>` namespaces. Until the stack is templated per environment this
+# declaration does not provide a real dev/staging/prod rollout; deploying it
+# three times would create three Applications pointing at the same chart.
+# `valuesFile` selects the committed verification overlay (test JWKS). For
+# production, replace the Cognito placeholders in the chart values and set
+# `valuesFile: ""`.
+app: home-graphql
+repoURL: https://github.com/stijnklomp-talos-linux-home-setup/home-cluster
+chartPath: developer/examples/home-graphql/deploy/home-graphql
+valuesFile: "values-verification.yaml"
+imageRepository: ghcr.io/graphql-hive/gateway
+targetRevisionDev: main
+targetRevisionStaging: main
+targetRevisionProd: main
+imageTagDev: "2.15.4"
+imageTagStaging: "2.15.4"
+imageTagProd: "2.15.4"

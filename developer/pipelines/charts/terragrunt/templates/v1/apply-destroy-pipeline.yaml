@@ -1,0 +1,81 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: terragrunt-apply-destroy-v1
+  namespace: tekton-pipelines
+  annotations:
+    tekton.dev/categories: "Terragrunt"
+    tekton.dev/tags: "tf,tg,infra"
+    tekton.dev/displayName: "terragrunt-apply-destroy"
+spec:
+  params:
+    - name: repo-url
+      type: string
+    - name: revision
+      type: string
+    - name: action # `apply` or `destroy`
+      type: string
+      default: "apply"
+    - name: plan-key
+      type: string
+    - name: terragrunt-dir
+      type: string
+    - name: image-version
+      type: string
+      default: "1.13.5"
+    - name: plan-file
+      type: string
+      default: "tfplan"
+  workspaces:
+    - name: source
+    - name: plans
+    - name: basic-auth
+  tasks:
+    - name: clone
+      workspaces:
+        - name: output
+          workspace: source
+        - name: basic-auth
+          workspace: basic-auth
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone-v1
+          - name: namespace
+            value: tekton-pipelines
+      params:
+        - name: url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.revision)
+
+    - name: terragrunt-apply-destroy
+      runAfter: [clone]
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: terragrunt-apply-destroy-v1
+          - name: namespace
+            value: tekton-pipelines
+      params:
+        - name: action
+          value: $(params.action)
+        - name: plan-key
+          value: $(params.plan-key)
+        - name: terragrunt-dir
+          value: $(params.terragrunt-dir)
+        - name: image-version
+          value: $(params.image-version)
+        - name: plan-file
+          value: $(params.plan-file)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: plans
+          workspace: plans

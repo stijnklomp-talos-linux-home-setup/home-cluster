@@ -1,0 +1,17 @@
+# ClusterIP only. The gateway has no Gateway API route; callers use the
+# Service DNS name from inside the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "home-graphql.fullname" . }}
+  labels:
+    {{- include "home-graphql.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "home-graphql.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http

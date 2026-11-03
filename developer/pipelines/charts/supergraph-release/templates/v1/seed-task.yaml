@@ -1,0 +1,117 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: supergraph-seed-v1
+  namespace: tekton-pipelines
+  labels:
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+  annotations:
+    tekton.dev/categories: "CI/CD"
+    tekton.dev/tags: "graphql,apollo,federation"
+    tekton.dev/displayName: "Seed the supergraph source workspace"
+    tekton.dev/platforms: "linux/amd64,linux/arm64"
+spec:
+  description: >-
+    Unpacks the home-graphql checkout from a ConfigMap into the `source`
+    workspace. `home-graphql` has no reachable git remote from this cluster, so
+    the checkout travels as a gzip tar of `supergraph.yaml` + `schemas/`,
+    base64-encoded because ConfigMap `data` must be UTF-8.
+
+    The Task refreshes the checkout on every run, so compose never reads files
+    left over from an earlier release. Rover's plugin cache (`$HOME/.rover`,
+    kept in `.rover-home/`) survives the refresh. The seed ConfigMap must live
+    in the PipelineRun namespace, which is the gateway namespace.
+
+    Used only when `repo-url` is empty; a reachable git remote still clones.
+  params:
+    - name: SEED_CONFIGMAP
+      description: ConfigMap holding the base64 gzip tar of the checkout
+      type: string
+      default: {{ .Values.source.seed.configMapName }}
+    - name: SEED_KEY
+      description: Data key of the archive inside that ConfigMap
+      type: string
+      default: {{ .Values.source.seed.key }}
+    - name: SUBDIRECTORY
+      description: >-
+        Subdirectory of the source workspace to unpack into (must match the
+        Pipeline's subdirectory parameter)
+      type: string
+      default: ""
+    - name: KUBECTL_IMAGE
+      description: Image with bash, tar, base64 and gzip
+      type: string
+      default: {{ .Values.images.kubectl }}
+  workspaces:
+    - name: source
+      description: >-
+        Persistent checkout + plugin cache. Compose writes the composed
+        artifact here and publish reads it back.
+  volumes:
+    - name: seed
+      configMap:
+        name: $(params.SEED_CONFIGMAP)
+        # Optional so the step can print the exact create command instead of
+        # leaving the pod stuck in ContainerCreating on a missing ConfigMap.
+        optional: true
+  steps:
+    - name: extract
+      image: $(params.KUBECTL_IMAGE)
+      workingDir: $(workspaces.source.path)
+      volumeMounts:
+        - name: seed
+          mountPath: /seed
+          readOnly: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        archive="/seed/$(params.SEED_KEY)"
+        dest="$(workspaces.source.path)"
+        if [ -n "$(params.SUBDIRECTORY)" ]; then
+          dest="${dest}/$(params.SUBDIRECTORY)"
+        fi
+
+        if [ ! -s "${archive}" ]; then
+          echo "Seed ConfigMap $(params.SEED_CONFIGMAP) is missing or has no $(params.SEED_KEY) key." >&2
+          echo "Create it from the home-graphql checkout (README 'Usage'):" >&2
+          echo "  tar -czf - supergraph.yaml schemas | base64 | tr -d '\\n' > /tmp/supergraph-source.b64" >&2
+          echo "  kubectl -n home-graphql create configmap $(params.SEED_CONFIGMAP) --from-file=$(params.SEED_KEY)=/tmp/supergraph-source.b64 --dry-run=client -o yaml | kubectl apply -f -" >&2
+          echo "The seed ConfigMap must be in the PipelineRun namespace." >&2
+          exit 1
+        fi
+
+        mkdir -p "${dest}"
+        work="$(mktemp -d "${dest}/.seed.XXXXXX")"
+        trap 'rm -rf "${work}"' EXIT
+
+        base64 -d "${archive}" | tar -xzf - -C "${work}"
+        if [ ! -f "${work}/supergraph.yaml" ]; then
+          echo "Seed archive has no supergraph.yaml at its root; refusing to replace ${dest}" >&2
+          exit 1
+        fi
+
+        # Replace the previous checkout, but keep Rover's plugin cache
+        # (`.rover-home`, which supergraph-compose-v1 sets as HOME).
+        shopt -s dotglob nullglob
+        for entry in "${dest}"/*; do
+          [ "${entry}" = "${work}" ] && continue
+          case "${entry##*/}" in
+            .rover-home) continue ;;
+          esac
+          rm -rf "${entry}"
+        done
+        mv "${work}"/* "${dest}/"
+        shopt -u dotglob nullglob
+
+        echo "Seeded ${dest} from ConfigMap $(params.SEED_CONFIGMAP):"
+        ls -la "${dest}"

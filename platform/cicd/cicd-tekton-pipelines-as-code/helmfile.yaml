@@ -1,0 +1,36 @@
+helmDefaults:
+  createNamespace: false
+  wait: true
+  timeout: 900 # 15 minutes
+
+releases:
+  # Custom charts/kustomizations
+
+  - name: pipelines-as-code-operator
+    chart: ./kustomizations/pipelines-as-code
+    labels:
+      stage: "operator"
+    strategicMergePatches:
+      - ./kustomizations/pipelines-as-code/patches/configmaps.yaml
+
+  - name: expose-pipelines-as-code
+    chart: ./charts/expose-pipelines-as-code
+    labels:
+      stage: "expose-operator"
+    needs:
+      - pipelines-as-code-operator
+
+  # Webhook relay: GitHub -> hook.pipelinesascode.com -> gosmee -> PaC controller.
+  # No domain/public IP needed. Remove when a domain + Cloudflare Tunnel exist.
+  - name: gosmee-client
+    chart: ./charts/gosmee-client
+    labels:
+      stage: "gosmee"
+    needs:
+      - pipelines-as-code-operator
+
+  # Repository CRs are owned by tenant-platform (the registry renders one per
+  # repos[] entry in the tenant namespace). The old
+  # `pipelines-as-code-repositories` release and chart are retired: the chart
+  # rendered every repository into tekton-pipelines, bypassing the tenancy gate.
+  # It was deleted from Git and uninstalled from the cluster in ticket #8.

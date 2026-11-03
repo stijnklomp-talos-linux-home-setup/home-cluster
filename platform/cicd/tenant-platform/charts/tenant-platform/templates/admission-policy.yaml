@@ -1,0 +1,75 @@
+{{/*
+Admission gate for PaC Repository CRs.
+
+The registry (values/tenants.yaml) is the primary control: only the platform
+creates Repository CRs and only for registered owners. This policy is
+defense-in-depth: it binds every Repository CR to the tenant namespace it lives
+in, so a CR cannot point at another owner's repository even if it is created by
+mistake (or by a future tool).
+
+Owner derivation matches the spec: the fourth '/'-segment of spec.url
+(https://github.com/<owner>/<repo> -> <owner>). The comparison is
+case-insensitive because GitHub logins are, while the namespace label keeps the
+owner verbatim (`stijnklomp-LAVE`).
+
+The `pipelines-as-code` namespace is exempt: it holds the global Repository CR,
+which is not scoped to a tenant namespace. `failurePolicy: Fail` means a broken
+policy blocks Repository writes instead of silently admitting them; the policy
+is cluster-critical on purpose.
+*/}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tenant-platform-repository-owner
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups:
+          - pipelinesascode.tekton.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - repositories
+        scope: Namespaced
+    # The global Repository CR in the PaC namespace has no tenant namespace,
+    # so the tenant-exemption is part of the policy match.
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            - pipelines-as-code
+  variables:
+    - name: url
+      expression: "has(object.spec.url) ? object.spec.url : ''"
+    - name: urlParts
+      expression: "variables.url.split('/')"
+    - name: urlOwner
+      expression: "size(variables.urlParts) >= 4 ? variables.urlParts[3] : ''"
+    - name: tenantLabels
+      expression: "has(namespaceObject.metadata.labels) ? namespaceObject.metadata.labels : {}"
+    - name: tenantOwner
+      expression: "'home.cluster/tenant' in variables.tenantLabels ? variables.tenantLabels['home.cluster/tenant'] : ''"
+  validations:
+    - expression: >-
+        variables.urlOwner != '' &&
+        variables.tenantOwner != '' &&
+        variables.urlOwner.lowerAscii() == variables.tenantOwner.lowerAscii()
+      message: >-
+        Repository spec.url owner must match the namespace label
+        home.cluster/tenant (case-insensitive). Expected
+        https://github.com/<home.cluster/tenant>/<repo> in a tenant namespace;
+        the pipelines-as-code namespace is exempt for the global Repository CR.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tenant-platform-repository-owner
+spec:
+  policyName: tenant-platform-repository-owner
+  validationActions:
+    - Deny

@@ -1,0 +1,166 @@
+# Command surface for this repo (ADR-0010). Run `just` for the recipe list.
+
+# Load personal overrides from `.env` into every recipe; the real process
+# environment still wins.
+set dotenv-load
+
+# List the available recipes.
+default:
+    @just --list
+
+# Run every fast local gate (`sqlx-check` needs the infra database on localhost:5432).
+check: fmt-check lint sqlx-check test
+
+# Format the crate.
+fmt:
+    cargo fmt --all
+
+# Check formatting without writing.
+fmt-check:
+    cargo fmt --all --check
+
+# Lint with warnings denied.
+lint:
+    cargo clippy --all-targets --all-features -- -D warnings
+
+# Build the service app.
+build:
+    cargo build
+
+# Run the service app locally.
+dev:
+    cargo run
+
+# Run the fast test suite: unit + feature tests via cargo-nextest (no
+# infrastructure needed). cargo-nextest has no doctest support, so doctests
+# run through cargo afterwards (same coverage as the previous `cargo test`).
+test:
+    cargo nextest run
+    cargo test --doc
+
+# Run the fast suite with the optional GraphQL federation subgraph (ADR-0011).
+test-graphql:
+    cargo nextest run --features graphql
+    cargo test --doc --features graphql
+
+# Run the acceptance suite once against its own compose stack, exiting with
+# the suite's status code (starts infra + the runner, then stops the stack).
+# `HOST_UID`/`HOST_GID` make the runner write as the invoking user; bare
+# `docker compose` defaults them to 1000. Host ports are remappable when
+# another stack is up, e.g.
+# `DATABASE_PORT=15432 CACHE_PORT=16379 RABBIT_PORT=15673 RABBIT_MGMT_PORT=15674 just test-acceptance`.
+test-acceptance:
+    HOST_UID=`id -u` HOST_GID=`id -g` docker compose --profile test up --build --attach acceptance-once --exit-code-from acceptance-once
+
+# Bring the acceptance stack up and idle for exec-driven runs, e.g.
+#   docker compose --profile acceptance exec acceptance \
+#     cargo nextest run --features acceptance --profile acceptance
+#   docker compose --profile acceptance exec acceptance \
+#     cargo nextest run --features acceptance --profile acceptance -E 'test(<name>)'
+# Tear down with `docker compose --profile acceptance down -v`.
+acceptance:
+    HOST_UID=`id -u` HOST_GID=`id -g` docker compose --profile acceptance up -d --wait
+    @echo "acceptance stack is up — exec in with: docker compose --profile acceptance exec acceptance <command>"
+
+# Coverage report for the fast suite (LCOV → lcov.info, gitignored).
+coverage:
+    cargo llvm-cov nextest --lcov --output-path lcov.info
+
+# --- Supply chain (ADR-0010) -------------------------------------------------
+
+# Licenses, advisories, bans and sources for the dependency graph (cargo-deny,
+# config in `deny.toml`). Needs network access for the RustSec advisory
+# database; after the first fetch the database is cached in `$CARGO_HOME`.
+licenses:
+    cargo deny check
+
+# Write `sbom.json` — the CycloneDX 1.5 JSON SBOM for the crate graph — then
+# build the release binaries with the same dependency metadata embedded in a
+# `.dep-v0` section (cargo-auditable), so image scanners (syft/grype) can read
+# the dependency list from the shipped binary. Both outputs are gitignored.
+sbom:
+    cargo cyclonedx --format json --spec-version 1.5 --override-filename sbom
+    cargo auditable build --release
+
+# --- Pact contract tests (ADR-0008) ------------------------------------------
+
+# Generate the consumer pact, then verify every checked-in pact in `pacts/`
+# against the real app on an ephemeral port, with real provider states. Needs
+# Postgres on localhost:5432 (`docker compose --profile infra up -d`).
+test-pact:
+    cargo test --features pact --test pact_consumer
+    cargo test --features pact --test pact_provider -- --nocapture
+
+# --- Docker (ADR-0009) -------------------------------------------------------
+
+# Build the local image (the tag the compose `local` profile uses).
+docker-build:
+    docker build --tag home-orders:local .
+
+# Build and push the multi-arch (amd64 + arm64) manifest for the registry
+# reference in $IMAGE (default home-orders:latest). Needs a buildx builder
+# with QEMU for the non-native platform and a registry login; inspect the
+# exact invocation without building or pushing via `just --dry-run docker-publish`.
+docker-publish image=env("IMAGE", "home-orders:latest"):
+    docker buildx build --platform linux/amd64,linux/arm64 --tag {{image}} --push .
+
+# --- OpenAPI (ADR-0004) ------------------------------------------------------
+
+# Write the committed openapi.yaml from the code (never hand-edit it).
+openapi:
+    cargo run --quiet --bin openapi
+
+# --- Database (sqlx-cli, ADR-0003) ------------------------------------------
+
+# CLI recipes fall back to the committed dev value when the real environment and
+# `.env` (dotenv-load) leave DATABASE_URL unset.
+dev_database_url := `grep -E '^DATABASE_URL=' .env.development | cut -d= -f2-`
+
+# Run pending migrations. Needs Postgres: `docker compose --profile infra up -d`.
+migrate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export DATABASE_URL="${DATABASE_URL:-{{dev_database_url}}}"
+    SQLX_OFFLINE=false cargo sqlx migrate run
+
+# Drop and recreate the database, then run every migration (destructive).
+db-reset:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export DATABASE_URL="${DATABASE_URL:-{{dev_database_url}}}"
+    SQLX_OFFLINE=false cargo sqlx database reset -y
+
+# Populate the dev database with reference users — destructive, dev-only;
+# refuses to run with APP_ENV=production. Run `just migrate` first.
+db-seed:
+    cargo run --quiet --bin db_seed
+
+# Refresh the committed `.sqlx` offline cache; run after changing queries or
+# schema. Needs Postgres with the migrations applied (`just migrate` first).
+sqlx-prepare:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export DATABASE_URL="${DATABASE_URL:-{{dev_database_url}}}"
+    SQLX_OFFLINE=false cargo sqlx prepare
+
+# Fail when the committed `.sqlx` cache is stale. Part of `just check`, so this
+# gate needs a reachable Postgres (host port 5432) migrated to the latest
+# migration; builds and tests themselves stay offline (`SQLX_OFFLINE=true`).
+sqlx-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export DATABASE_URL="${DATABASE_URL:-{{dev_database_url}}}"
+    SQLX_OFFLINE=false cargo sqlx prepare --check
+
+# --- Integrity (ADR-0010) ----------------------------------------------------
+
+# Run every gate end-to-end, aborting at the first failure: formatting, lint,
+# the `.sqlx` offline-cache check, the fast suite, cargo-deny, the SBOM +
+# auditable release build, pact verification, acceptance. `sqlx-check` and
+# `test-pact` need Postgres on localhost:5432 (`docker compose --profile infra
+# up -d`); `licenses` needs network access for the RustSec advisory database
+# (cached after the first fetch); `test-acceptance` drives its own compose
+# stack — remap its host ports, e.g.
+# `DATABASE_PORT=15432 CACHE_PORT=16379 RABBIT_PORT=15673 RABBIT_MGMT_PORT=15674
+# just integrity`, when another stack is already using the defaults.
+integrity: fmt-check lint sqlx-check test licenses sbom test-pact test-acceptance

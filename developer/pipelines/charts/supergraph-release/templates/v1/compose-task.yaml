@@ -1,0 +1,163 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: supergraph-compose-v1
+  namespace: tekton-pipelines
+  labels:
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+  annotations:
+    tekton.dev/categories: "CI/CD"
+    tekton.dev/tags: "graphql,apollo,federation"
+    tekton.dev/displayName: "Compose the supergraph with Apollo Rover"
+    tekton.dev/platforms: "linux/amd64,linux/arm64"
+spec:
+  description: >-
+    Runs `rover supergraph compose` against `supergraph.yaml` from the `source`
+    workspace and writes the composed SDL next to it. The plugin is pinned
+    (ELv2 `supergraph@=2.9.3`) and `--skip-update` keeps the run off the update
+    channel, so a compose is reproducible.
+
+    Composition validates every subgraph SDL and every federation reference.
+    Any artifact from an earlier run is deleted first, the new SDL is composed
+    to a temp file and only moved into the workspace on success, so a failed
+    composition leaves no artifact for the publisher.
+
+    Rover's plugin cache is `$HOME/.rover` with HOME on the `source` PVC
+    (`.rover-home/`), so only the first run downloads it; later runs work
+    offline. The first run needs egress to GitHub. Runs as UID 65532 under Pod
+    Security 'restricted'; the workspace must be writable by that identity.
+  params:
+    - name: CONFIG
+      description: Rover config path, relative to the source workspace (or SUBDIRECTORY)
+      type: string
+      default: supergraph.yaml
+    - name: OUTPUT
+      description: File name of the composed supergraph in the source workspace
+      type: string
+      default: supergraph.graphql
+    - name: SUBDIRECTORY
+      description: Subdirectory of the source workspace that holds the Rover config
+      type: string
+      default: ""
+    - name: ROVER_IMAGE
+      description: Pinned Rover image
+      type: string
+      default: {{ .Values.images.rover }}
+    - name: ROVER_PLUGIN
+      description: Pinned ELv2 composition plugin (must match federation_version)
+      type: string
+      default: {{ .Values.rover.plugin }}
+  workspaces:
+    - name: source
+      description: >-
+        Checkout holding the Rover config and the subgraph SDL files it
+        references. The composed artifact is written back here (next to the
+        config) and must be writable by UID 65532.
+  results:
+    - name: supergraph-path
+      description: Absolute path of the composed artifact in the source workspace
+  steps:
+    - name: compose
+      image: $(params.ROVER_IMAGE)
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: APOLLO_TELEMETRY_DISABLED
+          value: "1"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        # Rover's image runs as UID 10001 and its default home is not writable
+        # by this step's UID 65532. Point HOME at the source PVC; the pinned
+        # plugin then survives between runs in $HOME/.rover instead of being
+        # re-downloaded for every TaskRun.
+        export HOME="$(workspaces.source.path)/.rover-home"
+        mkdir -p "${HOME}"
+
+        src="$(workspaces.source.path)"
+        if [ -n "$(params.SUBDIRECTORY)" ]; then
+          src="${src}/$(params.SUBDIRECTORY)"
+        fi
+        config="${src}/$(params.CONFIG)"
+        artifact="${src}/$(params.OUTPUT)"
+
+        if [ ! -f "${config}" ]; then
+          echo "Rover config not found: ${config}" >&2
+          echo "Seed the workspace (README 'Usage') or set repo-url." >&2
+          exit 1
+        fi
+
+        # A previous run may have left an artifact next to the config; delete it
+        # so a failed composition now cannot publish the stale SDL. The
+        # publisher's runAfter is a second line of defence, not the only one.
+        rm -f "${artifact}"
+
+        plugin_marker="${HOME}/.rover/.installed-$(params.ROVER_PLUGIN)"
+        if [ -f "${plugin_marker}" ]; then
+          echo "Using cached $(params.ROVER_PLUGIN) from ${HOME}/.rover"
+        else
+          rover plugin install "$(params.ROVER_PLUGIN)" --elv2-license accept
+          mkdir -p "${HOME}/.rover"
+          touch "${plugin_marker}"
+        fi
+
+        work="$(mktemp -d)"
+        trap 'rm -rf "${work}"' EXIT
+
+        # Compose into a private temp file: a failed composition must never
+        # leave a partial supergraph where the publish Task would find it.
+        rover supergraph compose \
+          --config "${config}" \
+          --output "${work}/$(params.OUTPUT)" \
+          --elv2-license accept \
+          --skip-update
+
+        mv "${work}/$(params.OUTPUT)" "${artifact}"
+        printf '%s' "${artifact}" > "$(results.supergraph-path.path)"
+        echo "Composed ${artifact}"
+
+    - name: verify
+      image: $(params.ROVER_IMAGE)
+      workingDir: $(workspaces.source.path)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        artifact="$(workspaces.source.path)"
+        if [ -n "$(params.SUBDIRECTORY)" ]; then
+          artifact="${artifact}/$(params.SUBDIRECTORY)"
+        fi
+        artifact="${artifact}/$(params.OUTPUT)"
+        if [ ! -s "${artifact}" ]; then
+          echo "Composed supergraph is missing or empty: ${artifact}" >&2
+          exit 1
+        fi
+
+        # A composed supergraph always links the join spec and defines the
+        # join__Graph enum; anything else is not a supergraph SDL.
+        for marker in 'https://specs.apollo.dev/join/' 'join__Graph' 'type Query'; do
+          if ! grep -q "${marker}" "${artifact}"; then
+            echo "Composed artifact is not a supergraph SDL (missing '${marker}')" >&2
+            exit 1
+          fi
+        done
+
+        echo "Verified ${artifact}: $(wc -l < "${artifact}") lines, sha256 $(sha256sum "${artifact}" | cut -d' ' -f1)"

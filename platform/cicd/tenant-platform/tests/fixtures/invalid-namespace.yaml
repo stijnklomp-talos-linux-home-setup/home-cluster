@@ -1,0 +1,6 @@
+# Underscores and uppercase are not allowed in a DNS-1123 label.
+tenants:
+  - owner: Acme_CI
+    namespace: Acme_CI
+    tier: build
+    repos: []

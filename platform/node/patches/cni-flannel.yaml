@@ -1,0 +1,13 @@
+# Rollback patch: hand pod networking back to Talos-managed Flannel.
+#
+# Use only with the rollback procedure in
+# platform/cluster/home-cilium/README.md:
+# uninstall Cilium, patch every node, reboot the nodes so /etc/cni/net.d is
+# regenerated, then restart the workloads.
+#
+# Talos v1.13.x form. Talos v1.14+ uses the `KubeFlannelCNIConfig` resource
+# instead of `cluster.network.cni`.
+cluster:
+  network:
+    cni:
+      name: flannel

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "home-users.fullname" . }}-config
+  labels:
+    {{- include "home-users.labels" . | nindent 4 }}
+data:
+  APP_ENV: {{ .Values.config.appEnv | quote }}
+  API_PORT: "3000"
+  REQUEST_LOG_LEVEL: {{ .Values.config.requestLogLevel | quote }}
+  APP_LOG_LEVEL: {{ .Values.config.appLogLevel | quote }}
+  CACHE_DISABLED: {{ .Values.config.cacheDisabled | quote }}
+  RABBIT_DISABLED: {{ .Values.config.rabbitDisabled | quote }}
+  GRAPHQL_ENABLED: {{ .Values.config.graphqlEnabled | quote }}
+  GRAPHQL_JWKS_URL: {{ include "home-users.graphqlJwksUrl" . | quote }}
+  GRAPHQL_JWT_ISSUER: {{ include "home-users.graphqlJwtIssuer" . | quote }}
+  GRAPHQL_JWT_AUDIENCE: {{ include "home-users.graphqlJwtAudience" . | quote }}
+  GRAPHQL_JWT_CLIENT_ID: {{ include "home-users.graphqlJwtClientId" . | quote }}

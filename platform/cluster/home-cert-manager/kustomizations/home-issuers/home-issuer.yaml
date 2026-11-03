@@ -1,0 +1,12 @@
+# Intermediate issuer for all LAN services. Servers sign certs for
+# `*.sslip.io`-style hosts (any LAN IP works without DNS changes).
+#
+# The root CA certificate (Secret `home-root-ca` in cert-manager ns) must be
+# trusted by devices that talk to the cluster over HTTPS.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: home-issuer
+spec:
+  ca:
+    secretName: home-root-ca

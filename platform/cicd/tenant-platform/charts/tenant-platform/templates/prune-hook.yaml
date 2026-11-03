@@ -1,0 +1,168 @@
+{{- $uniqueDevelopers := include "tenant-platform.uniqueDevelopers" . }}
+{{- $namespaces := list }}
+{{- range $tenant := .Values.tenants }}
+{{- $namespaces = append $namespaces $tenant.namespace }}
+{{- end }}
+---
+# Helm cannot remove a namespace (or a cluster-scoped CRB) that disappears from
+# a range, and a namespace deletion must not block the upgrade. This
+# post-install/post-upgrade hook reconciles the cluster to the registry: it
+# deletes managed namespaces that are no longer listed and namespace-lister
+# CRBs whose user is gone. It runs *after* the release resources (including its
+# own ServiceAccount) exist, which is why it is not a pre-upgrade hook: a
+# pre-upgrade Job cannot use a ServiceAccount that the same release has not
+# created yet.
+#
+# DANGER: deleting a tenant namespace deletes its PVCs; Longhorn volumes with
+# reclaim policy Delete are then removed and their data is unrecoverable. See
+# README.md before removing a registry entry.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.pruner.serviceAccount.name }}
+  namespace: {{ .Values.pruner.serviceAccount.namespace }}
+---
+# Least privilege: no `get`, no secrets, no pods. Namespace list/delete and
+# ClusterRoleBinding list/delete is all the pruner needs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenant-platform-pruner
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - list
+      - delete
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - clusterrolebindings
+    verbs:
+      - list
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tenant-platform-pruner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tenant-platform-pruner
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.pruner.serviceAccount.name }}
+    namespace: {{ .Values.pruner.serviceAccount.namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tenant-platform-prune
+  namespace: {{ .Values.pruner.serviceAccount.namespace }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tenant-platform-pruner
+    spec:
+      serviceAccountName: {{ .Values.pruner.serviceAccount.name }}
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: prune
+          image: {{ .Values.pruner.image }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ALLOW_EMPTY_REGISTRY
+              value: {{ .Values.pruner.allowEmptyRegistry | quote }}
+          command:
+            - /bin/sh
+            - -c
+          args:
+            - |
+              set -eu
+
+              if [ -z "${KEEP_NAMESPACES:-}" ] && [ "${ALLOW_EMPTY_REGISTRY:-false}" != "true" ]; then
+                echo "REFUSING to prune: the registry rendered no tenant namespaces." >&2
+                echo "This is almost always a mistake. Set pruner.allowEmptyRegistry=true" >&2
+                echo "only when you intentionally want to delete every managed tenant." >&2
+                exit 1
+              fi
+
+              keep_namespaces=",${KEEP_NAMESPACES:-},"
+              keep_developers=",${KEEP_DEVELOPERS:-},"
+
+              echo "tenant-platform pruner: registry namespaces [${KEEP_NAMESPACES:-}]"
+              for namespace in $(kubectl get namespaces \
+                -l home.cluster/managed=true \
+                -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+                case "${keep_namespaces}" in
+                  *",${namespace},"*)
+                    echo "keep namespace ${namespace}"
+                    ;;
+                  *)
+                    echo "delete namespace ${namespace} (not in the registry)"
+                    kubectl delete namespace "${namespace}" --wait=false --ignore-not-found
+                    ;;
+                esac
+              done
+
+              echo "tenant-platform pruner: registry developers [${KEEP_DEVELOPERS:-}]"
+              for entry in $(kubectl get clusterrolebindings \
+                -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{range .subjects[*]}{.name}{","}{end}{"\n"}{end}'); do
+                binding="${entry%%|*}"
+                case "${binding}" in
+                  tekton-namespace-lister-*) ;;
+                  *) continue ;;
+                esac
+                users="${entry#*|}"
+                keep=0
+                old_ifs="${IFS}"
+                IFS=,
+                for user in ${users}; do
+                  [ -n "${user}" ] || continue
+                  case "${keep_developers}" in
+                    *",${user},"*) keep=1 ;;
+                  esac
+                done
+                IFS="${old_ifs}"
+                if [ "${keep}" -eq 1 ]; then
+                  echo "keep clusterrolebinding ${binding}"
+                else
+                  echo "delete clusterrolebinding ${binding} (developer not in the registry)"
+                  kubectl delete clusterrolebinding "${binding}" --ignore-not-found
+                fi
+              done
+          env:
+            - name: KEEP_NAMESPACES
+              value: {{ join "," $namespaces | quote }}
+            - name: KEEP_DEVELOPERS
+              value: {{ $uniqueDevelopers | quote }}
+            - name: HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,52 @@
+helmDefaults:
+  createNamespace: true
+  wait: true
+  timeout: 900 # 15 minutes
+
+releases:
+  - name: tekton-operator
+    namespace: tekton-operator
+    chart: ./charts/upstream/tekton-operator-0.81.1.tgz
+    version: 0.81.1
+    labels:
+      stage: "operator"
+    set:
+      - name: installCRDs
+        value: true
+      # The operator otherwise auto-creates TektonConfig/config, which would
+      # race the tekton-operator-config release below (Helm ownership conflict).
+      - name: operator.autoInstallComponents
+        value: false
+    hooks:
+      - events: ["prepare"]
+        command: bash
+        args:
+          - -c
+          - |
+            kubectl get ns tekton-operator || kubectl create ns tekton-operator
+            kubectl get ns tekton-pipelines || kubectl create ns tekton-pipelines
+
+  # Custom charts/kustomizations
+
+  - name: tekton-operator-config
+    namespace: tekton-operator
+    chart: ./kustomizations/tekton-operator-config
+    labels:
+      stage: "config"
+    needs:
+      - tekton-operator
+
+  # Standalone Tekton Dashboard (write-mode, v0.72.0). Deliberately NOT the
+  # operator-managed TektonDashboard component: the operator would restore the
+  # cluster-wide ClusterRoleBindings this overlay strips (see
+  # kustomizations/tekton-dashboard/patches/remove-rbac.yaml).
+
+  - name: tekton-dashboard
+    chart: ./kustomizations/tekton-dashboard
+    labels:
+      stage: "dashboard"
+    # NOTE: apply after the config stage (operator must install the Tekton CRDs
+    # first); no `needs` because stage-filtered applies break on it.
+
+  # TODO (later date): log retention stack (Vector/MinIO or Tekton Results) —
+  # deliberately not part of the home setup.

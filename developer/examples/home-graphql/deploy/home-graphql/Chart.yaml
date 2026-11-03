@@ -1,0 +1,6 @@
+apiVersion: v2
+name: home-graphql
+description: Hive Gateway serving the Rover-composed home supergraph (ClusterIP only)
+type: application
+version: 0.1.0
+appVersion: "2.15.4"

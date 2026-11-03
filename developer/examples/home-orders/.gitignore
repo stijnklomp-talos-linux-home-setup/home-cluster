@@ -1,0 +1,16 @@
+# Build artifacts
+/target
+
+# Acceptance runner toolchain/crate caches (bind-mounted by the compose
+# `test`/`acceptance` profiles; created on first run, safe to delete)
+/.acceptance
+
+# Coverage reports (cargo-llvm-cov → `just coverage`)
+lcov.info
+
+# SBOM artifact (cargo-cyclonedx → `just sbom`; the cargo-auditable metadata
+# lives in `/target`, already ignored)
+/sbom.json
+
+# Personal overrides; committed env files are .env.development, .env.production, .env.tests
+.env

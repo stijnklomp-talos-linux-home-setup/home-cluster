@@ -1,0 +1,46 @@
+# home-graphql chart values.
+#
+# The defaults describe production: public Hive Gateway image, one
+# ClusterIP-only replica, ambient mTLS, and the Cognito pool. The live
+# verification deployment uses values-verification.yaml (test issuer/JWKS);
+# switch back by applying these values.
+
+image:
+  repository: ghcr.io/graphql-hive/gateway
+  tag: "2.15.4"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  port: 80
+
+config:
+  supergraphPath: /gateway/supergraph/supergraph.graphql
+  # Cognito production placeholders. Access tokens carry `client_id`, not
+  # `aud`, so the audience check is disabled and the app client id is checked
+  # instead. Replace `<region>`, `<pool>` and `<client-id>` at deploy time;
+  # the gateway refuses to start while the issuer still has a placeholder.
+  jwtIssuer: https://cognito-idp.<region>.amazonaws.com/<pool>
+  jwtAudience: ""
+  jwtClientId: <client-id>
+  jwksUri: https://cognito-idp.<region>.amazonaws.com/<pool>/.well-known/jwks.json
+
+networkPolicy:
+  # Extra namespaces allowed to call the gateway. The release namespace is
+  # always allowed (the verification caller lives there); the gateway has no
+  # edge route, so this list stays empty in production until the UI lands.
+  callerNamespaces: []
+  # Subgraph and JWKS namespaces. Ambient transports every hop over HBONE
+  # (15008); port 80 stays allowed for the JWKS server's own listener.
+  backendNamespaces:
+    - home-users
+    - home-orders
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

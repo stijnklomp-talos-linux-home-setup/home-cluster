@@ -1,0 +1,80 @@
+# Safety net for the per-deploy-tenant terraform plans PVC: sweeps plan files
+# older than 30 days that were never applied. Applied plans are removed by
+# terragrunt-apply-destroy-v1 itself; this catches orphans. Lives in the same
+# namespace as the PVC and the PipelineRuns (values/platform.yaml).
+#
+# The PVC is RWO (Longhorn attaches it to one node). Node tolerations/affinity
+# mirror the Tekton default pod template so this pod prefers the CI node —
+# where plan/apply TaskRuns run — and normally co-mounts the already-attached
+# volume instead of forcing a reattach.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: home-terraform-plans-cleanup
+  namespace: {{ required "namespace is required (apply with --values values/platform.yaml)" .Values.namespace }}
+spec:
+  schedule: "30 3 * * *" # nightly, quiet hours
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 3600
+      template:
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            # Plans are written by the terragrunt tasks as UID/GID 65532 (see
+            # charts/terragrunt). The janitor uses the same identity so it can
+            # delete those files; fsGroup makes a fresh PVC group-writable.
+            fsGroup: 65532
+            fsGroupChangePolicy: OnRootMismatch
+          tolerations:
+            - key: node-role.kubernetes.io/ci
+              operator: Exists
+              effect: PreferNoSchedule
+          affinity:
+            nodeAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  preference:
+                    matchExpressions:
+                      - key: node-role.kubernetes.io/ci
+                        operator: Exists
+          containers:
+            - name: cleanup
+              image: busybox:1.36
+              # Non-root: the terragrunt tasks write plans as UID 65532, so the
+              # janitor runs as the same UID. Files left over from the previous
+              # root-based tasks must be removed once by hand (see the
+              # top-level README "Pod Security" section).
+              env:
+                - name: HOME
+                  value: /tmp
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                seccompProfile:
+                  type: RuntimeDefault
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  echo "Plan files before cleanup:"
+                  find /plans -type f -print
+                  find /plans -type f -mtime +30 -delete
+                  find /plans -mindepth 1 -type d -empty -delete
+                  echo "Plan files after cleanup:"
+                  find /plans -type f -print
+              volumeMounts:
+                - name: plans
+                  mountPath: /plans
+          volumes:
+            - name: plans
+              persistentVolumeClaim:
+                claimName: home-terraform-plans

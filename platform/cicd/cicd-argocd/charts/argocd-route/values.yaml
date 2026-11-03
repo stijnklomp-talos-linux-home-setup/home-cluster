@@ -1,0 +1,16 @@
+# The route host is derived from the existing `configs.cm.url` value (the same
+# file is passed to this release), so the real hostname is not duplicated. The
+# default here is a TEST-NET-1 documentation host.
+configs:
+  cm:
+    url: "https://argocd.192.0.2.10.sslip.io"
+
+gateway:
+  name: istio-internal
+  namespace: istio-ingress
+  # Port 443 is shared with five other listeners; bind by sectionName.
+  sectionName: https-argocd
+
+backend:
+  name: argocd-server
+  port: 80

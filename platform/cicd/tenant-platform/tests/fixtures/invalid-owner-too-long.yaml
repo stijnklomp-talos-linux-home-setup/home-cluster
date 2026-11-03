@@ -1,0 +1,6 @@
+# 64 characters: one more than the label-value limit for home.cluster/tenant.
+tenants:
+  - owner: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    namespace: acme
+    tier: build
+    repos: []

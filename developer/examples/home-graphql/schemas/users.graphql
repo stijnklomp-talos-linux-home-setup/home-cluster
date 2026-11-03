@@ -1,0 +1,87 @@
+type Query {
+	"""
+	The caller authenticated by the bearer token.
+	"""
+	viewer: Viewer!
+	"""
+	A page of users, ordered by id.
+	"""
+	users(page: Int! = 1, perPage: Int! = 100): [User!]! @requiresScopes(scopes: [["users:read"]])
+	"""
+	A single user by id: visible to self or with `users:read`.
+	"""
+	user(id: ID!): User
+}
+
+"""
+The federated `User` entity (`@key(fields: "id")`).
+"""
+type User @key(fields: "id") {
+	"""
+	The federation key.
+	"""
+	id: ID!
+	"""
+	Display name.
+	"""
+	name: String!
+	"""
+	Creation timestamp (ISO 8601, no timezone suffix).
+	"""
+	createdAt: String!
+	"""
+	Initials derived from the display name: "Ada Lovelace" -> "AL".
+	
+	A computed field, not a column: it only exists in the SDL, so a change
+	to it is a pure schema change that the gateway can pick up without a
+	subgraph image rebuild of the gateway or a Hive restart.
+	"""
+	initials: String!
+	"""
+	Contact address: the caller's own verified record, or any user with
+	`users:read`. No `@requiresScopes` here: the gateway cannot express
+	"self or scope", so this resolver is the guard (and still applies to
+	direct subgraph calls).
+	"""
+	email: String!
+}
+
+"""
+The authenticated caller, resolved from the JWT context.
+"""
+type Viewer {
+	"""
+	Token `sub` claim.
+	"""
+	subject: String
+	"""
+	Token `email` claim (the caller's own address).
+	"""
+	email: String
+	"""
+	Whether the token's email claim is verified.
+	"""
+	emailVerified: Boolean!
+	"""
+	Local user id from `user_id`/`custom:user_id` or a numeric `sub`.
+	"""
+	userId: Int
+	"""
+	Token scopes.
+	"""
+	scopes: [String!]!
+}
+
+"""
+Directs the executor to include this field or fragment only when the `if` argument is true.
+"""
+directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"""
+Directs the executor to skip this field or fragment when the `if` argument is true.
+"""
+directive @skip(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+extend schema @link(
+	url: "https://specs.apollo.dev/federation/v2.5",
+	import: ["@key", "@tag", "@shareable", "@inaccessible", "@override", "@external", "@provides", "@requires", "@composeDirective", "@interfaceObject", "@requiresScopes"]
+)
+

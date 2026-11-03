@@ -1,0 +1,214 @@
+# Live acceptance test for the tenant platform (ticket #4).
+#
+# This is NOT applied by the chart. It proves, from inside the first tenant
+# namespace, that a PipelineRun can run under `restricted` Pod Security and
+# that the Cilium egress policy allows exactly what the spec allows.
+#
+# Defaults:
+#   - git-clone-v1 from `tekton-pipelines` via the cluster resolver (ticket #3
+#     makes it restricted-compatible; this manifest deliberately does not use
+#     any other shared task).
+#   - One inline task with a network probe. The step declares its own
+#     restricted securityContext, so it does not depend on the shared catalog.
+#   - An emptyDir workspace: no Longhorn PVC and no cluster storage class.
+#
+# Run (only after the chart and ticket #3 are applied):
+#
+#   kubectl apply -f tenant-platform/tests/build-tenant-pipelinerun.yaml
+#   kubectl wait --for=condition=Succeeded --timeout=20m \
+#     -n stijnklomp-lave pipelinerun/tenant-acceptance
+#   kubectl logs -n stijnklomp-lave -l tekton.dev/pipelineRun=tenant-acceptance \
+#     --all-containers --prefix
+#
+# Allowed: DNS, Verdaccio, public internet. Denied: Kubernetes API, home LAN,
+# another namespace's service. The probe exits non-zero on any mismatch, so the
+# PipelineRun itself is the assertion.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: tenant-acceptance
+  namespace: stijnklomp-lave
+  labels:
+    app.kubernetes.io/part-of: tenant-platform
+    home.cluster/acceptance: "true"
+spec:
+  taskRunTemplate:
+    serviceAccountName: tekton-bot
+    podTemplate:
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+  params:
+    - name: repo-url
+      value: https://github.com/stijnklomp-LAVE/test-app
+    - name: revision
+      value: main
+    - name: api-host
+      value: kubernetes.default.svc.cluster.local
+    - name: peer-host
+      value: tekton-dashboard.tekton-pipelines.svc.cluster.local
+    - name: peer-port
+      value: "9097"
+    - name: lan-host
+      value: "192.168.1.107"
+    - name: lan-port
+      value: "6443"
+  pipelineSpec:
+    params:
+      - name: repo-url
+        type: string
+      - name: revision
+        type: string
+      - name: api-host
+        type: string
+      - name: peer-host
+        type: string
+      - name: peer-port
+        type: string
+      - name: lan-host
+        type: string
+      - name: lan-port
+        type: string
+    workspaces:
+      - name: source
+    tasks:
+      - name: clone
+        taskRef:
+          resolver: cluster
+          params:
+            - name: kind
+              value: task
+            - name: name
+              value: git-clone-v1
+            - name: namespace
+              value: tekton-pipelines
+        params:
+          - name: url
+            value: $(params.repo-url)
+          - name: revision
+            value: $(params.revision)
+          - name: depth
+            value: "1"
+        workspaces:
+          - name: output
+            workspace: source
+      - name: network-probe
+        runAfter:
+          - clone
+        params:
+          - name: api-host
+            value: $(params.api-host)
+          - name: peer-host
+            value: $(params.peer-host)
+          - name: peer-port
+            value: $(params.peer-port)
+          - name: lan-host
+            value: $(params.lan-host)
+          - name: lan-port
+            value: $(params.lan-port)
+        taskSpec:
+          params:
+            - name: api-host
+              type: string
+            - name: peer-host
+              type: string
+            - name: peer-port
+              type: string
+            - name: lan-host
+              type: string
+            - name: lan-port
+              type: string
+          steps:
+            - name: probe
+              # Same probe image as the Cilium acceptance script (ticket #2).
+              # curl exit codes are reliable for reachable/refused/timeout;
+              # busybox nc returns 0 for an unroutable address and nslookup
+              # returns 0 for NXDOMAIN, so neither is used here.
+              image: docker.io/curlimages/curl:8.23.0
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                seccompProfile:
+                  type: RuntimeDefault
+              env:
+                - name: API_HOST
+                  value: $(params.api-host)
+                - name: PEER_HOST
+                  value: $(params.peer-host)
+                - name: PEER_PORT
+                  value: $(params.peer-port)
+                - name: LAN_HOST
+                  value: $(params.lan-host)
+                - name: LAN_PORT
+                  value: $(params.lan-port)
+              script: |
+                #!/bin/sh
+                set -eu
+
+                failures=0
+
+                pass() { echo "PASS: $*"; }
+                fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
+
+                expect_http() {
+                  label="$1"
+                  url="$2"
+                  if curl -fsS -o /dev/null --connect-timeout 5 --max-time 20 "$url"; then
+                    pass "$label reachable ($url)"
+                  else
+                    fail "$label NOT reachable ($url)"
+                  fi
+                }
+
+                # Any HTTP response (including 401/403 from the API server)
+                # means the TCP/TLS path is open; the deny assertions only
+                # care that the connection is blocked.
+                expect_denied() {
+                  label="$1"
+                  url="$2"
+                  if curl -ksS -o /dev/null --connect-timeout 3 --max-time 6 "$url" 2>/dev/null; then
+                    fail "$label reachable ($url) (expected deny)"
+                  else
+                    pass "$label denied ($url)"
+                  fi
+                }
+
+                echo "=== allowed egress ==="
+                # getent (getaddrinfo) returns non-zero for NXDOMAIN, unlike
+                # busybox nslookup.
+                if getent hosts verdaccio.verdaccio.svc.cluster.local >/dev/null 2>&1; then
+                  pass "cluster DNS resolves verdaccio.verdaccio.svc.cluster.local"
+                else
+                  fail "cluster DNS does not resolve verdaccio.verdaccio.svc.cluster.local"
+                fi
+                expect_http "Verdaccio" "http://verdaccio.verdaccio.svc.cluster.local:4873/-/ping"
+                expect_http "internet" "https://registry.npmjs.org/"
+
+                echo "=== denied egress ==="
+                # Prove the deny targets exist before treating a failed
+                # connection as policy enforcement (a typo would otherwise
+                # look like a deny).
+                for host in "$API_HOST" "$PEER_HOST"; do
+                  if getent hosts "$host" >/dev/null 2>&1; then
+                    pass "deny target resolves: ${host}"
+                  else
+                    fail "deny target does not resolve: ${host}"
+                  fi
+                done
+                expect_denied "Kubernetes API" "https://${API_HOST}/"
+                expect_denied "home LAN" "https://${LAN_HOST}:${LAN_PORT}/"
+                expect_denied "another namespace (Tekton dashboard)" "http://${PEER_HOST}:${PEER_PORT}/"
+
+                if [ "$failures" -ne 0 ]; then
+                  echo "$failures network assertion(s) failed"
+                  exit 1
+                fi
+                echo "all network assertions passed"
+  workspaces:
+    - name: source
+      emptyDir: {}

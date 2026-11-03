@@ -1,0 +1,58 @@
+# cargo-deny configuration; `just licenses` runs every check below. The
+# successor of the Fastify template's `check-licenses.ts` (ADR-0010), extended
+# with the advisory, ban and source checks.
+
+[graph]
+# Resolve with all features enabled so feature-gated dependencies (the pact
+# toolchain, the acceptance suite) are covered too.
+all-features = true
+
+[advisories]
+# Findings are ignored per advisory ID, never per crate, and only with a reason.
+# Everything below is dev-only: it is reachable through the pact contract-test
+# toolchain, never through the service binary or its dependency graph.
+ignore = [
+    { id = "RUSTSEC-2021-0139", reason = "ansi_term unmaintained; dev-only via pact_matching (pact contract tests)" },
+    { id = "RUSTSEC-2020-0095", reason = "difference unmaintained; dev-only via pact_matching (pact contract tests)" },
+    { id = "RUSTSEC-2025-0057", reason = "fxhash unmaintained; dev-only via hashers -> pact_models (pact contract tests)" },
+    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin timing attack, no fixed release; dev-only via pact-plugin-driver, never parses attacker input here" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; dev-only via pact_mock_server (pact contract tests)" },
+]
+
+[licenses]
+# Licenses accepted for the whole crate graph: what the tree actually contains,
+# kept to the permissive set (`cargo deny check licenses --show-stats` lists the
+# per-license counts).
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+]
+# Per-crate exceptions for licenses that only specific crates carry, instead of
+# widening the global allow list.
+exceptions = [
+    # Mozilla's CA root-certificate data license.
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots" },
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" },
+    # Boost Software License, xxhash-rust only.
+    { allow = ["BSL-1.0"], crate = "xxhash-rust" },
+]
+
+[bans]
+# Duplicate versions are unavoidable in a graph of this size; report them
+# without failing the gate.
+multiple-versions = "warn"
+# A `*` version requirement fails outright; the lockfile is the pin.
+wildcards = "deny"
+
+[sources]
+# crates.io only: a dependency fetched from another registry or a git URL fails
+# the gate.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

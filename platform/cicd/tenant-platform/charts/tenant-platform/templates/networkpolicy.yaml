@@ -1,0 +1,54 @@
+{{- range $tenant := .Values.tenants }}
+---
+# Default-deny sandbox for one tenant namespace. Egress is allowed only to
+# cluster DNS, Verdaccio and the public internet (`build`), plus the Kubernetes
+# API for `deploy`. The RFC1918/link-local deny rules take precedence over the
+# `world` allow, so the home LAN, node IPs and the Talos API stay unreachable.
+# Other namespaces and the API server are ClusterIPs and are denied by default
+# because they are not in the allow list.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: tenant-sandbox
+  namespace: {{ $tenant.namespace }}
+spec:
+  description: >-
+    Tenant sandbox: ingress only from the host; egress only to cluster DNS,
+    Verdaccio, the public internet{{ if eq $tenant.tier "deploy" }} and the
+    Kubernetes API{{ end }}; RFC1918 and link-local denied.
+  endpointSelector: {}
+  ingress:
+    - fromEntities:
+        - host
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ $.Values.verdaccio.namespace | quote }}
+      toPorts:
+        - ports:
+            - port: {{ $.Values.verdaccio.port | quote }}
+              protocol: TCP
+    - toEntities:
+        - world
+{{- if eq $tenant.tier "deploy" }}
+    - toEntities:
+        - kube-apiserver
+{{- end }}
+  egressDeny:
+    - toCIDR:
+        - 192.168.0.0/16
+    - toCIDR:
+        - 172.16.0.0/12
+    - toCIDR:
+        - 169.254.0.0/16
+{{- end }}

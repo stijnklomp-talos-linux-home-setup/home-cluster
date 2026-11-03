@@ -1,0 +1,25 @@
+# Bootstrap: the app-of-apps — watches THIS repo (path: platform/gitops/applications)
+# and syncs every Application manifest in it. Applied once via kubectl, never
+# stored under platform/gitops/applications/ (so it cannot prune itself).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: home-apps
+  namespace: argo
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/stijnklomp-talos-linux-home-setup/home-cluster
+    targetRevision: main
+    path: platform/gitops/applications
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ApplyOutOfSyncOnly=true

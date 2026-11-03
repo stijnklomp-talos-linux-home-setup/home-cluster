@@ -1,0 +1,48 @@
+{
+  "verified_at": "2026-11-03T00:00:00Z",
+  "smoke_tested": false,
+  "commands": {
+    "../home-cluster-1-config/": {
+      "exists": true
+    },
+    "../home-cluster-internal/": {
+      "exists": true
+    },
+    "platform/": {
+      "exists": true
+    },
+    "developer/": {
+      "exists": true
+    },
+    "tools/": {
+      "exists": true
+    },
+    "platform/cluster/": {
+      "exists": true
+    },
+    "platform/cicd/": {
+      "exists": true
+    },
+    "platform/infra/": {
+      "exists": true
+    },
+    "platform/node/": {
+      "exists": true
+    },
+    "platform/gitops/": {
+      "exists": true
+    },
+    "developer/docs/": {
+      "exists": true
+    },
+    "developer/pipelines/": {
+      "exists": true
+    },
+    "developer/apps/": {
+      "exists": true
+    },
+    "developer/examples/": {
+      "exists": true
+    }
+  }
+}

@@ -1,0 +1,23 @@
+# Longhorn default settings for the 4-node home cluster (1 CP + 3 workers).
+# Control plane runs kube-system only (no storage there); replicas spread across the
+# 3 workers (2 Lenovos + 1 Dell CI node).
+global:
+  # User-deployed components (manager/UI/driver) must also run on the tainted CI node
+  # so TaskRun volumes can attach there.
+  tolerations:
+    - key: node-role.kubernetes.io/ci
+      operator: Exists
+      effect: NoSchedule
+
+defaultSettings:
+  defaultReplicaCount: 2
+  createDefaultDiskLabeledNodes: false
+  systemManagedComponentsNodeSelector: ""
+  # System-managed components (CSI plugin, instance-managers, engine images) tolerate the CI taint.
+  taintToleration: "node-role.kubernetes.io/ci:NoSchedule"
+  # Allow instance-manager eviction during node drains (home cluster drains nodes
+  # regularly for upgrades/shutdown). Default "block-for-eviction" makes
+  # kubectl drain hang on the instance-manager PodDisruptionBudget.
+  nodeDrainPolicy: always-allow
+  v1DataEngine: true
+  v2DataEngine: false

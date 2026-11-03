@@ -1,0 +1,66 @@
+"""
+The federated `Order` entity (`@key(fields: "id")`).
+"""
+type Order @key(fields: "id") {
+	"""
+	The federation key.
+	"""
+	id: ID!
+	"""
+	Reference to the users subgraph's `User` entity.
+	"""
+	userId: ID!
+	"""
+	Total in minor units (cents).
+	"""
+	total: Int!
+	"""
+	Order status (`pending`, `paid`, `shipped` or `cancelled`).
+	"""
+	status: String!
+	"""
+	Creation timestamp (ISO 8601, no timezone suffix).
+	"""
+	createdAt: String!
+	"""
+	The user who placed the order: a federation reference only. The users
+	subgraph resolves `name`/`email` for this representation.
+	"""
+	user: User!
+}
+
+type Query {
+	"""
+	A page of orders: the caller's unless the token has `orders:admin`.
+	
+	Two `requires_scopes` values are two OR groups:
+	`@requiresScopes(scopes: [["orders:read"], ["orders:admin"]])`. A single
+	space-separated value would emit one AND group, so keep them separate.
+	"""
+	orders(page: Int! = 1, perPage: Int! = 100): [Order!]! @requiresScopes(scopes: [["orders:read"], ["orders:admin"]])
+	"""
+	A single order by id; a different owner is denied.
+	"""
+	order(id: ID!): Order @requiresScopes(scopes: [["orders:read"], ["orders:admin"]])
+}
+
+type User @key(fields: "id", resolvable: false) {
+	"""
+	The federation key.
+	"""
+	id: ID!
+}
+
+"""
+Directs the executor to include this field or fragment only when the `if` argument is true.
+"""
+directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"""
+Directs the executor to skip this field or fragment when the `if` argument is true.
+"""
+directive @skip(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+extend schema @link(
+	url: "https://specs.apollo.dev/federation/v2.5",
+	import: ["@key", "@tag", "@shareable", "@inaccessible", "@override", "@external", "@provides", "@requires", "@composeDirective", "@interfaceObject", "@requiresScopes"]
+)
+

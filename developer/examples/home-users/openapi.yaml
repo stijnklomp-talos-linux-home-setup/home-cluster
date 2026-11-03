@@ -1,0 +1,199 @@
+openapi: 3.1.0
+info:
+  title: home-users
+  description: 'home-users: REST + optional Federated GraphQL users service'
+  license:
+    name: MIT
+  version: 0.1.0
+paths:
+  /healthz:
+    get:
+      tags:
+      - health
+      summary: 'Liveness: the process is up. Always 204.'
+      operationId: healthz
+      responses:
+        '204':
+          description: The process is up
+  /readyz:
+    get:
+      tags:
+      - health
+      summary: |-
+        Readiness: 204 when every registered check passes, problem+json 503
+        otherwise. Failure messages are logged, not exposed.
+      operationId: readyz
+      responses:
+        '204':
+          description: Every registered check passes
+        '503':
+          description: A dependency is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/users:
+    get:
+      tags:
+      - users
+      summary: '`GET /v1/users`: one page of users.'
+      operationId: get_users
+      parameters:
+      - name: page
+        in: query
+        description: Page number, starting at 1.
+        required: true
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+      - name: perPage
+        in: query
+        description: Users per page, at most 100 (0 returns an empty page).
+        required: true
+        schema:
+          type: integer
+          format: int32
+          maximum: 100
+          minimum: 0
+      responses:
+        '200':
+          description: A page of users
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsersResponse'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/users/{id}:
+    get:
+      tags:
+      - users
+      summary: '`GET /v1/users/{id}`: one user, or problem+json 404.'
+      operationId: get_user
+      parameters:
+      - name: id
+        in: path
+        description: User id.
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '200':
+          description: The user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: No user with that id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+components:
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem details.
+      required:
+      - type
+      - title
+      - status
+      properties:
+        detail:
+          type:
+          - string
+          - 'null'
+          description: Human-readable explanation for this occurrence.
+        errors:
+          type:
+          - array
+          - 'null'
+          items:
+            $ref: '#/components/schemas/ProblemError'
+          description: Validation details (extension member, ADR-0005).
+        instance:
+          type:
+          - string
+          - 'null'
+          description: URI of the specific occurrence.
+        status:
+          type: integer
+          format: int32
+          description: HTTP status code.
+          minimum: 0
+        title:
+          type: string
+          description: Short human-readable summary of the problem type.
+        type:
+          type: string
+          description: URI identifying the problem type.
+    ProblemError:
+      type: object
+      description: One entry in the `errors` validation extension member.
+      required:
+      - detail
+      properties:
+        detail:
+          type: string
+          description: What is wrong with the value.
+        pointer:
+          type:
+          - string
+          - 'null'
+          description: JSON Pointer of the offending field.
+    User:
+      type: object
+      description: A user (one `users` table row).
+      required:
+      - id
+      - email
+      - name
+      - createdAt
+      properties:
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp.
+        email:
+          type: string
+          description: Contact address; unique.
+        id:
+          type: integer
+          format: int64
+          description: Federation key and primary key.
+        name:
+          type: string
+          description: Display name.
+    UsersResponse:
+      type: object
+      description: '`GET /v1/users` response body.'
+      required:
+      - users
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+          description: The requested page of users.
+tags:
+- name: health
+- name: users

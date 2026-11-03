@@ -1,0 +1,6 @@
+apiVersion: v2
+name: tenant-platform
+description: Per-tenant namespaces, quotas, network policy, service account, npmrc, Repository CRs and developer RBAC for Pipelines-as-Code
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

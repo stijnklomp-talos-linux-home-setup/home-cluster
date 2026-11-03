@@ -1,0 +1,11 @@
+# Shared namespace input for the namespace-templated charts.
+#
+# `namespace` is the deploy tenant (operator org) namespace. It owns the deploy
+# secrets, the terragrunt plan PVC and its cleanup CronJob. The build tenant
+# never gets these.
+#
+# There is no `namespaces` list here: the only tenant list is the registry in
+# home-cluster-kubernetes-cicd/tenant-platform/values/tenants.yaml. Per-tenant
+# objects (namespace, quota, CiliumNetworkPolicy, tekton-bot SA, npm-npmrc) are
+# rendered by tenant-platform, not by this catalog.
+namespace: stijnklomp-talos-linux-home-setup

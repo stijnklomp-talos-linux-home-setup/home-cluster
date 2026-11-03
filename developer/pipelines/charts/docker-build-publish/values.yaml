@@ -1,0 +1,13 @@
+# Seccomp profile used by the build step of build-push-v1 / kaniko-v1.
+#
+# The profile must be installed on every node at
+# /var/lib/kubelet/seccomp/profiles/buildah-userns.json. Canonical source and
+# Talos machine-config patch: platform/node/patches/buildah-seccomp.yaml.
+# See README.md.
+#
+# Set type to RuntimeDefault to fall back to the stock containerd profile.
+# Rootless builds then fail at unshare(CLONE_NEWUSER) on this cluster.
+buildah:
+  seccompProfile:
+    type: Localhost
+    localhostProfile: profiles/buildah-userns.json

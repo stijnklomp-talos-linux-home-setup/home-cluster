@@ -1,0 +1,44 @@
+# Namespace admission labels for the production edge. A route may only attach
+# to `istio-internal` from a namespace carrying `istio.io/edge-route: enabled`
+# (Gateway `allowedRoutes.namespaces.from: Selector`).
+#
+# This file is applied with `kubectl apply -f` from a helmfile presync hook,
+# not rendered as part of the Helm release: Helm cannot adopt namespaces that
+# other components already own. Applying a Namespace object only merges these
+# labels and never deletes the namespace or its other labels.
+#
+# Never add a tenant namespace here. Tenants have no edge routes by design.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-ingress
+  labels:
+    istio.io/edge-route: enabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argo
+  labels:
+    istio.io/edge-route: enabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: home-sso-auth
+  labels:
+    istio.io/edge-route: enabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pipelines-as-code
+  labels:
+    istio.io/edge-route: enabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pinniped-system
+  labels:
+    istio.io/edge-route: enabled

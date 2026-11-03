@@ -1,0 +1,20 @@
+{{- range $tenant := .Values.tenants }}
+{{- $concurrency := $tenant.concurrencyLimit | default 2 }}
+{{- range $repo := ($tenant.repos | default list) }}
+---
+# The Repository CR namespace is the run namespace: PaC creates the
+# PipelineRun here, not in tekton-pipelines. `source` provenance lets a pull
+# request run the .tekton/ definition from its own branch; the namespace
+# sandbox, not the provenance setting, is the safety boundary.
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: {{ $repo.name }}
+  namespace: {{ $tenant.namespace }}
+spec:
+  url: {{ $repo.url | quote }}
+  concurrency_limit: {{ $concurrency }}
+  settings:
+    pipelinerun_provenance: source
+{{- end }}
+{{- end }}

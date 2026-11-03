@@ -1,0 +1,48 @@
+# cargo-nextest repository configuration (ADR-0010: the `just` recipes are
+# the gates; `just test` and `just test-acceptance` are the entry points).
+#
+# Suite layout:
+#
+#   `just test`            `cargo nextest run` + `cargo test --doc`
+#                          Fast suite: unit + feature tests, no
+#                          infrastructure. The acceptance test target only
+#                          builds with the `acceptance` feature (Cargo.toml)
+#                          and the two real-broker integration binaries
+#                          (`tests/amqp.rs`, `tests/consumer.rs`) are
+#                          filtered out here.
+#   `just test-acceptance` Compose `test` profile: builds the acceptance target
+#                          and runs it once with `--profile acceptance`
+#                          (exit code = suite result). The profile runs every
+#                          real-infrastructure suite: `acceptance`, `amqp`,
+#                          `consumer`.
+#   `just acceptance`      Compose `acceptance` profile: idle stack for
+#                          `docker compose --profile acceptance exec ...`
+#                          runs (all tests, one test, or debug).
+#
+# Plain `cargo test` runs the fast suite plus the real-broker tests (they are
+# not feature-gated; run them with the shared infra stack up), and nothing
+# from `tests/acceptance/` (feature-gated). Doctests always run through
+# `cargo test --doc` because nextest has no doctest support.
+#
+# Focused broker runs from the host, against the shared `infra` stack:
+#   cargo nextest run -E 'binary(amqp)'
+#   cargo nextest run -E 'binary(consumer)'
+
+# Oldest nextest this configuration is written for.
+nextest-version = "0.9.148"
+
+[profile.default]
+# Everything except the real-broker integration binaries: the fast suite needs
+# no infrastructure (Postgres is only needed for `just sqlx-check`).
+default-filter = "not (binary(amqp) | binary(consumer))"
+
+[profile.acceptance]
+# Real-infrastructure suites, for the compose stack. Nextest profiles cannot
+# toggle cargo features, so callers pass `--features acceptance` (the compose
+# runners and `just test-acceptance` do); this filter then selects the
+# acceptance target plus the broker integration binaries.
+default-filter = "binary(acceptance) | binary(amqp) | binary(consumer)"
+# One database and one broker are shared by every test: run serially.
+test-threads = 1
+# Report every failure instead of stopping at the first.
+fail-fast = false

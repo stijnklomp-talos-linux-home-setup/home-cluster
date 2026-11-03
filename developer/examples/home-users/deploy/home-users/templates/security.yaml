@@ -1,0 +1,75 @@
+# Ambient mTLS is mandatory for every workload in the namespace (including
+# Postgres and the test JWKS server; ztunnel encrypts both hops).
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  labels:
+    {{- include "home-users.labels" . | nindent 4 }}
+spec:
+  mtls:
+    mode: STRICT
+---
+# Cilium L3/L4 policy for the service. Ambient intercepts every flow into
+# ztunnel (HBONE, port 15008), so the policy must allow the ztunnel hops as
+# well as direct same-namespace endpoints; caller identity is enforced by the
+# STRICT PeerAuthentication above, not by Cilium. Egress is limited to DNS,
+# the in-namespace Postgres/JWKS and HTTPS for an external JWKS.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "home-users.fullname" . }}
+  labels:
+    {{- include "home-users.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "home-users.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: app
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+        {{- range .Values.networkPolicy.ingressNamespaces }}
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ . }}
+        {{- end }}
+    - fromEntities:
+        - host
+        - health
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+            - port: "80"
+              protocol: TCP
+            # Ambient delivers same-namespace traffic through the destination
+            # pod's HBONE listener; the original port is inside the tunnel.
+            - port: "15008"
+              protocol: TCP
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+# Postgres has no CiliumNetworkPolicy. A 5432-only ingress policy was tried
+# and blocked the app/migration traffic in this cluster (Cilium + retained
+# kube-proxy presented the source as the node/host, not the app endpoint), so
+# it was removed rather than shipping a policy that breaks the database. The
+# service policy above still restricts who can reach the app; a DB policy is a
+# follow-up once the Cilium selector/SNAT behaviour is understood.

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: home-orders
+description: orders subgraph — REST + Federated GraphQL over Postgres
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

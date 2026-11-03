@@ -1,0 +1,55 @@
+# Pull-request validation: build (and push) the image, no GitOps bump.
+# Copy to <app-repo>/.tekton/ci.yaml and replace the TODO placeholders.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: app-ci-
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+spec:
+  taskRunTemplate:
+    podTemplate:
+      securityContext:
+        # Every task in the shared catalog runs as UID/GID 65532; fsGroup makes
+        # the PVC writable by that identity across steps.
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+  # The Pipeline lives in the shared catalog namespace; PaC runs this
+  # PipelineRun in the tenant namespace, so resolve it with the cluster
+  # resolver instead of a bare name.
+  pipelineRef:
+    resolver: cluster
+    params:
+      - name: kind
+        value: pipeline
+      - name: name
+        value: app-release-v1
+      - name: namespace
+        value: tekton-pipelines
+  params:
+    - name: repo-url
+      value: "{{ repo_url }}"
+    - name: revision
+      value: "{{ revision }}"
+    # TODO: replace <DOCKERHUB_USERNAME> and <APP>
+    - name: image
+      value: "docker.io/<DOCKERHUB_USERNAME>/<APP>:{{ revision }}"
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ "ReadWriteOnce" ]
+          resources:
+            requests:
+              storage: 1Gi
+          storageClassName: longhorn
+    - name: basic-auth
+      secret:
+        secretName: "{{ git_auth_secret }}"
+    - name: docker-credentials
+      secret:
+        secretName: dockerhub-docker-config
+    - name: gitops-auth
+      secret:
+        secretName: gitops-pat

@@ -1,0 +1,12 @@
+# Route-specific values. The hostname is not repeated here: the release also
+# receives values/argocd-values.yaml, and the route derives its host from that
+# file's `configs.cm.url` (the pre-existing ArgoCD URL). That keeps the public
+# repo free of a duplicated LAN address.
+gateway:
+  name: istio-internal
+  namespace: istio-ingress
+  sectionName: https-argocd
+
+backend:
+  name: argocd-server
+  port: 80

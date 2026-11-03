@@ -1,0 +1,21 @@
+helmDefaults:
+  createNamespace: true
+  wait: true
+  timeout: 900 # 15 minutes
+  atomic: true
+
+releases:
+  - name: longhorn
+    namespace: longhorn-system
+    chart: ./charts/upstream/longhorn-1.12.1.tgz
+    version: 1.12.1
+    labels:
+      stage: "upstream"
+    values:
+      - values/longhorn-values.yaml
+    hooks:
+      # Longhorn pods are privileged (host mounts, block devices) — the namespace
+      # must be exempt from the baseline PodSecurity profile before install.
+      - events: ["presync"]
+        kubectlApply:
+          filename: kustomizations/longhorn-ns/namespace.yaml

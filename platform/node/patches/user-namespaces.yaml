@@ -1,0 +1,27 @@
+# Enable unprivileged user namespaces for the rootless image builder.
+#
+# Talos defaults `user.max_user_namespaces` to 0, which makes every rootless
+# builder fail at `unshare(CLONE_NEWUSER)` with EPERM: rootless Buildah,
+# rootless BuildKit and pod-level `hostUsers: false` cannot start. The PaC
+# tenancy spec requires a rootless builder for `restricted` tenant
+# namespaces, so the cluster must allow unprivileged user namespaces.
+#
+# Apply to every node's machine config (control plane and workers):
+#
+#   talosctl --talosconfig <talosconfig> patch machineconfig \
+#     --nodes <node-ip> --patch @patches/user-namespaces.yaml --dry-run
+#   talosctl --talosconfig <talosconfig> patch machineconfig \
+#     --nodes <node-ip> --patch @patches/user-namespaces.yaml
+#
+# Talos applies `machine.sysctls` immediately with --mode=no-reboot and persists
+# it for the next boot; no reboot is required. Verify with:
+#
+#   talosctl --talosconfig <talosconfig> read /proc/sys/user/max_user_namespaces -n <node-ip>
+#
+# Trade-off: unprivileged user namespaces are an additional kernel attack
+# surface on a shared CI node. They are also the only way to run a rootless
+# container builder without privileged mode or added capabilities. Recorded in
+# the tenancy runbook.
+machine:
+  sysctls:
+    user.max_user_namespaces: "15000"

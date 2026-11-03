@@ -1,0 +1,18 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+terraform.tfvars
+*.auto.tfvars
+**/tfplan
+
+# Terragrunt
+**/.terragrunt-cache/
+*.generated.tf
+
+# Local secrets
+.env
+*.secret.tfvars

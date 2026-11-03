@@ -1,0 +1,6 @@
+apiVersion: v2
+name: gosmee-client
+description: Forwards GitHub webhooks from hook.pipelinesascode.com to the PaC controller (no public IP needed)
+type: application
+version: 0.1.0
+appVersion: 0.32.0

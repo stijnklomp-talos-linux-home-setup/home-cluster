@@ -1,0 +1,11 @@
+# Ambient mTLS is mandatory for the gateway (and the verification caller in
+# this namespace; ztunnel encrypts both hops).
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  labels:
+    {{- include "home-graphql.labels" . | nindent 4 }}
+spec:
+  mtls:
+    mode: STRICT

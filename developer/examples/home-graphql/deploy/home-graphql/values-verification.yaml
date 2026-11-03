@@ -1,0 +1,10 @@
+# Verification overlay (ticket #17): the in-cluster test JWKS server publishes
+# the public half of tests/fixtures/graphql-test-key.pem. The test tokens use
+# the Cognito *access-token* shape: no `aud`, a `client_id` claim instead, and
+# the space-delimited `scope` claim. Use only for the live JWT-path
+# verification; production applies the Cognito defaults in values.yaml.
+config:
+  jwtIssuer: https://test-issuer.home.test
+  jwtAudience: ""
+  jwtClientId: home-test-client
+  jwksUri: http://home-users-jwks.home-users.svc.cluster.local/jwks.json

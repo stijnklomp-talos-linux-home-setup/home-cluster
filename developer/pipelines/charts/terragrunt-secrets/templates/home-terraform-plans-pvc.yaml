@@ -1,0 +1,15 @@
+# Per-deploy-tenant PVC used by terragrunt plan/apply to hand off the plan
+# file. Created in the deploy tenant namespace (values/platform.yaml), next to
+# the PipelineRuns that mount it. Longhorn storage class. RWO - only one
+# plan+apply pair per tenant at a time (see TODO in apply-destroy-task.yaml).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: home-terraform-plans
+  namespace: {{ required "namespace is required (apply with --values values/platform.yaml)" .Values.namespace }}
+spec:
+  accessModes: [ "ReadWriteOnce" ]
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: longhorn

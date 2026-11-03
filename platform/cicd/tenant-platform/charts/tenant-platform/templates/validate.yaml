@@ -1,0 +1,1 @@
+{{- include "tenant-platform.validateRegistry" . -}}

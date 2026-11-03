@@ -1,0 +1,30 @@
+# Render-check fixture: one build tenant and one deploy tenant, developer
+# deduplication (dev@example.com is in both), a tenant quota override and an
+# explicit concurrency limit. Reserved example.com addresses only — no
+# personal data.
+tenants:
+  - owner: acme
+    namespace: acme-build
+    tier: build
+    developers:
+      - dev@example.com
+    quota:
+      pods: "5"
+    limitRange:
+      default:
+        cpu: "1"
+    repos:
+      - name: widgets
+        url: https://github.com/acme/widgets
+      - name: app
+        url: https://github.com/acme/app
+  - owner: acme-deploy
+    namespace: acme-deploy
+    tier: deploy
+    developers:
+      - dev@example.com
+      - ops@example.com
+    concurrencyLimit: 3
+    repos:
+      - name: infra
+        url: https://github.com/acme-deploy/infra

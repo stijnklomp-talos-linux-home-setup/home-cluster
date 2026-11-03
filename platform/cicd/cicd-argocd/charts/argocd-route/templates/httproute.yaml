@@ -1,0 +1,29 @@
+# ArgoCD is served by the internal Istio gateway (edge cutover, ticket #12).
+# TLS terminates at the Gateway; ArgoCD itself stays on plain HTTP
+# (`server.insecure: true`) behind it.
+#
+# The route lives in the `argo` namespace, next to its backend, so no
+# ReferenceGrant is needed.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: argocd
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: argocd-route
+    app.kubernetes.io/part-of: argocd
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      namespace: {{ .Values.gateway.namespace }}
+      sectionName: {{ .Values.gateway.sectionName }}
+  hostnames:
+    - {{ .Values.configs.cm.url | trimPrefix "https://" | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ .Values.backend.name }}
+          port: {{ .Values.backend.port }}

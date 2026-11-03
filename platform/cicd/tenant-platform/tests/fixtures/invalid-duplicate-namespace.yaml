@@ -1,0 +1,9 @@
+tenants:
+  - owner: acme
+    namespace: acme
+    tier: build
+    repos: []
+  - owner: other
+    namespace: acme
+    tier: build
+    repos: []

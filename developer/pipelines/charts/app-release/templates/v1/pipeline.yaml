@@ -1,0 +1,140 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: app-release-v1
+  namespace: tekton-pipelines
+  labels:
+    app.kubernetes.io/version: "0.1"
+  annotations:
+    tekton.dev/categories: "CI/CD"
+    tekton.dev/tags: "gitops,argocd,buildah"
+    tekton.dev/displayName: "Build an app image and bump its GitOps env tags"
+    tekton.dev/platforms: "linux/amd64,linux/arm64"
+spec:
+  description: >-
+    Clone -> build+push (rootless Buildah) -> gitops-yaml-bump. The bump is
+    skipped when `gitops-file` is empty (e.g. PR validation builds). Dev and
+    staging usage examples pass the declaration path plus the keys to set, so
+    ArgoCD can sync the matching environment.
+
+    Runs under Pod Security 'restricted'; the build step uses the
+    buildah-userns Localhost seccomp profile (see
+    charts/docker-build-publish/README.md).
+  params:
+    - name: repo-url
+      description: App repo to clone
+      type: string
+    - name: revision
+      description: Commit SHA, branch or tag to clone
+      type: string
+    - name: image
+      description: Full image reference to build and push (e.g. docker.io/user/app:v1.2.3)
+      type: string
+    - name: dockerfile
+      description: Path to the Dockerfile, relative to the cloned repo
+      type: string
+      default: ./Dockerfile
+    - name: context
+      description: Build context, relative to the cloned repo
+      type: string
+      default: ./
+    - name: gitops-repo-url
+      description: GitOps repo that holds the app declaration
+      type: string
+      default: https://github.com/stijnklomp-talos-linux-home-setup/home-cluster
+    - name: gitops-revision
+      description: Branch of the GitOps repo to edit
+      type: string
+      default: main
+    - name: gitops-file
+      description: App declaration path in the GitOps repo; empty skips the bump
+      type: string
+      default: ""
+    - name: gitops-set
+      description: Flat top-level keys to set in the declaration, each as key=value
+      type: array
+      default: []
+  workspaces:
+    - name: source
+      description: Holds the cloned repo and the build context
+    - name: basic-auth
+      description: PaC git auth secret for the app repo (git_auth_secret)
+    - name: docker-credentials
+      description: Docker config.json for the push target (dockerhub-docker-config)
+    - name: gitops-auth
+      description: PAT with contents:write on the GitOps repo (gitops-pat)
+  tasks:
+    - name: clone
+      workspaces:
+        - name: output
+          workspace: source
+        - name: basic-auth
+          workspace: basic-auth
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone-v1
+          - name: namespace
+            value: tekton-pipelines
+      params:
+        - name: url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.revision)
+
+    - name: build-and-push
+      runAfter:
+        - clone
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: build-push-v1
+          - name: namespace
+            value: tekton-pipelines
+      workspaces:
+        - name: source
+          workspace: source
+        - name: dockerconfig
+          workspace: docker-credentials
+      params:
+        - name: IMAGE
+          value: $(params.image)
+        - name: DOCKERFILE
+          value: $(params.dockerfile)
+        - name: CONTEXT
+          value: $(params.context)
+
+    - name: gitops-bump
+      runAfter:
+        - build-and-push
+      when:
+        - input: $(params.gitops-file)
+          operator: notin
+          values: [""]
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: gitops-yaml-bump-v1
+          - name: namespace
+            value: tekton-pipelines
+      workspaces:
+        - name: gitops-auth
+          workspace: gitops-auth
+      params:
+        - name: REPO_URL
+          value: $(params.gitops-repo-url)
+        - name: REVISION
+          value: $(params.gitops-revision)
+        - name: FILE
+          value: $(params.gitops-file)
+        - name: SET
+          value: $(params.gitops-set[*])

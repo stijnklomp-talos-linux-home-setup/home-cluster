@@ -1,0 +1,26 @@
+# Allows the SNAT-ed kubelet health probes into ambient pods.
+#
+# Istio's ambient data plane redirects kubelet probes through a link-local
+# SNAT address (169.254.7.127). Cilium allows node-level health probes past
+# policy by default but does not know that address, so as soon as a namespace
+# has a default-deny CiliumNetworkPolicy (all tenant namespaces do), probes to
+# ambient pods are dropped and the pods are marked unready.
+#
+# `enableDefaultDeny: false` is required: a CCNP with an ingress rule and an
+# empty endpoint selector would otherwise turn itself into a cluster-wide
+# default-deny policy. This policy only adds an allow.
+#
+# Source: https://istio.io/latest/docs/ambient/install/platform-prerequisites/#cilium
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: allow-ambient-hostprobes
+spec:
+  description: Allows SNAT-ed kubelet health check probes into ambient pods
+  enableDefaultDeny:
+    egress: false
+    ingress: false
+  endpointSelector: {}
+  ingress:
+    - fromCIDR:
+        - 169.254.7.127/32

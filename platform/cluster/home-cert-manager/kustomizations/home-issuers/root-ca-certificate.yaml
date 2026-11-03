@@ -1,0 +1,18 @@
+# Bootstraps the root CA keypair: the self-signed issuer signs this CA cert,
+# which lands in Secret `home-root-ca` — consumed by the `home-issuer` CA issuer.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: home-root-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  duration: 876000h # 100 years — avoids periodic device re-imports; same key is reused on reissue
+  commonName: home-root-ca
+  secretName: home-root-ca
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: home-root-ca
+    kind: ClusterIssuer

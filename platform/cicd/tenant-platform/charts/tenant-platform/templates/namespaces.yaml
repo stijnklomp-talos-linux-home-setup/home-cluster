@@ -1,0 +1,22 @@
+{{- range $tenant := .Values.tenants }}
+---
+# Tenant namespace and run namespace. The labels are the contract:
+# home.cluster/tenant is the GitHub owner verbatim (used by the admission
+# policy), home.cluster/tier selects the quota/network profile, and
+# home.cluster/managed lets the post-install/post-upgrade pruner find registry-owned
+# namespaces. Pod Security is enforced, not just warned.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $tenant.namespace }}
+  labels:
+    home.cluster/tenant: {{ $tenant.owner | quote }}
+    home.cluster/tier: {{ $tenant.tier | quote }}
+    home.cluster/managed: "true"
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+{{- end }}

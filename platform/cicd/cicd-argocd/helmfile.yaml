@@ -1,0 +1,35 @@
+helmDefaults:
+  createNamespace: true
+  wait: true
+  timeout: 900 # 15 minutes
+  atomic: true
+
+releases:
+  # ArgoCD — GitOps CD (v3.5.3). App-of-apps lives in the home-cluster GitHub
+  # repo (ApplicationSet); this chart is the day-1 install path (see ADR).
+  # SSO: native OIDC -> Cognito (dedicated 'argocd' client, AWS SSO only).
+  - name: argocd
+    namespace: argo
+    chart: ./charts/upstream/argo-cd-10.9.2.tgz
+    version: 10.9.2
+    labels:
+      stage: "argocd"
+    values:
+      - values/argocd-values.yaml
+      - secrets/argocd-secrets.yaml
+
+  # Edge route. The Gateway, its TLS certificate and the HTTP->HTTPS redirect
+  # are owned by home-istio (base repo); this release only adds the ArgoCD
+  # route in its own namespace. Attach by sectionName (port 443 is shared).
+  - name: argocd-route
+    namespace: argo
+    chart: ./charts/argocd-route
+    labels:
+      stage: "argocd"
+    values:
+      - values/argocd-route-values.yaml
+      # Supplies configs.cm.url, which the route uses as its hostname. Passing
+      # the ArgoCD values file avoids duplicating the address in a second file.
+      - values/argocd-values.yaml
+    needs:
+      - argocd

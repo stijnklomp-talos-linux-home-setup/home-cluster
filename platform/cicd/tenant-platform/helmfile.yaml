@@ -1,0 +1,21 @@
+# Tenant platform: one release renders every tenant in values/tenants.yaml.
+# Resources declare their own namespaces, so the Helm release itself stays in
+# the kubeconfig default namespace (the same convention as the other PaC
+# charts). Apply with:
+#
+#   helmfile -l stage=tenancy apply
+#
+# The post-install/post-upgrade hook prunes namespaces/CRBs that disappeared
+# from the registry; it needs the cluster-scoped RBAC in charts/tenant-platform.
+helmDefaults:
+  createNamespace: false
+  wait: true
+  timeout: 900 # 15 minutes
+
+releases:
+  - name: tenant-platform
+    chart: ./charts/tenant-platform
+    labels:
+      stage: "tenancy"
+    values:
+      - values/tenants.yaml

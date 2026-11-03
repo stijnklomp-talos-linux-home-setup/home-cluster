@@ -1,0 +1,7 @@
+tenants:
+  - owner: acme
+    namespace: acme
+    tier: build
+    repos:
+      - name: Widgets_App
+        url: https://github.com/acme/widgets

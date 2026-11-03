@@ -1,0 +1,47 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: terragrunt-apply-
+  # Runs in the deploy tenant namespace. `home-terraform-plans` is now a
+  # per-deploy-tenant PVC (values/platform.yaml), not a shared control-plane
+  # volume, so this PipelineRun and its plan storage live in the same namespace.
+  namespace: stijnklomp-talos-linux-home-setup
+  annotations:
+    # Run manually (e.g. `kubectl create -f`) with PLAN_KEY from the plan run result.
+    pipelinesascode.tekton.dev/on-event: "[manual]"
+spec:
+  taskRunTemplate:
+    podTemplate:
+      securityContext:
+        # Every task in the shared catalog runs as UID/GID 65532; fsGroup makes
+        # the PVC writable by that identity across steps.
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+  params:
+    - name: repo-url
+      value: "{{ repo_url }}"
+    - name: revision
+      value: "{{ revision }}"
+    - name: action
+      value: "apply"
+    - name: plan-key
+      value: "${PLAN_KEY}"
+    - name: terragrunt-dir
+      value: "envs/prod"
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ "ReadWriteOnce" ]
+          resources:
+            requests:
+              storage: 1Gi
+          storageClassName: longhorn
+    - name: plans
+      persistentVolumeClaim:
+        claimName: home-terraform-plans
+    - name: basic-auth
+      secret:
+        secretName: "{{ git_auth_secret }}"
+  pipelineRef:
+    name: terragrunt-apply-destroy-v1

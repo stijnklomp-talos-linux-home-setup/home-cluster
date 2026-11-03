@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gosmee-client
+  namespace: pipelines-as-code
+  labels:
+    app: gosmee-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gosmee-client
+  template:
+    metadata:
+      labels:
+        app: gosmee-client
+    spec:
+      containers:
+        - name: gosmee-client
+          # Pinned stable release (docs use :main — do not unpin)
+          image: ghcr.io/chmouel/gosmee:v0.32.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - client
+            - "$(SMEE_URL)"
+            - "http://pipelines-as-code-controller.pipelines-as-code.svc.cluster.local:8080"
+          env:
+            - name: SMEE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pipelines-as-code-secret
+                  key: smee
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi

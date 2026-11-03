@@ -1,0 +1,66 @@
+# Negative case for the ambient proof: this namespace is NOT labeled
+# `istio.io/dataplane-mode: ambient`, so its pods stay outside the mesh and
+# send plaintext. Against the STRICT PeerAuthentication in `ambient-sandbox`,
+# ztunnel must reset that connection.
+#
+# Same image and shape as the in-mesh client so the only difference between
+# the two probes is mesh membership.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ambient-sandbox-nomesh
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: curl-client
+  namespace: ambient-sandbox-nomesh
+  labels:
+    app: ambient-client-nomesh
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ambient-client-nomesh
+  template:
+    metadata:
+      labels:
+        app: ambient-client-nomesh
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: curl
+          image: curlimages/curl:8.23.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - sleep
+            - infinity
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "true"
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

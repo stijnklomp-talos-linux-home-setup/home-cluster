@@ -1,0 +1,172 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: supergraph-release-v1
+  namespace: tekton-pipelines
+  labels:
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+  annotations:
+    tekton.dev/categories: "CI/CD"
+    tekton.dev/tags: "graphql,apollo,federation,gitops"
+    tekton.dev/displayName: "Compose and publish the home supergraph"
+    tekton.dev/platforms: "linux/amd64,linux/arm64"
+spec:
+  description: >-
+    Manual supergraph release: seed or clone `home-graphql`, compose the
+    supergraph with the pinned Rover plugin, then publish it as the Hive
+    Gateway supergraph ConfigMap. Hive polls that ConfigMap every 10 s; the
+    observed end-to-end latency from PipelineRun start to the new schema being
+    served is 12–57 s, so budget about a minute. No gateway rebuild or restart.
+
+    `home-graphql` has no reachable git remote from this cluster, so the
+    default path is a seed ConfigMap (`source-configmap`) unpacked into the
+    persistent `source` PVC by `supergraph-seed-v1`. Set `repo-url` to use
+    `git-clone-v1` instead; the seed is skipped when `repo-url` is set.
+
+    Failure behaviour: `publish-configmap` runs only after `compose-supergraph`
+    succeeds and compose deletes any stale artifact first. An invalid SDL or a
+    broken federation reference fails the compose Task and the ConfigMap is
+    left untouched, so Hive keeps serving the last good supergraph.
+
+    The publisher writes the same ConfigMap the gateway chart renders, so
+    ArgoCD reports it OutOfSync afterwards; commit the recomposed artifact
+    before syncing (README "GitOps deviation"). This iteration is **manual**
+    and has **no breaking-change gate**: triggered by a human, not by PaC, and
+    it does not diff schemas or block removals.
+  params:
+    - name: repo-url
+      description: >-
+        Git URL of the home-graphql repo. Empty uses `source-configmap`; the
+        `source` workspace must then be the seeded PVC.
+      type: string
+      default: ""
+    - name: revision
+      description: Commit SHA, branch or tag to clone
+      type: string
+      default: main
+    - name: subdirectory
+      description: Subdirectory of the source workspace that holds the Rover config
+      type: string
+      default: ""
+    - name: source-configmap
+      description: >-
+        ConfigMap (in the PipelineRun namespace) with the checkout as a
+        base64 gzip tar. Used when `repo-url` is empty; empty skips seeding and
+        composes whatever the `source` PVC already holds.
+      type: string
+      default: {{ .Values.source.seed.configMapName }}
+    - name: config-map-name
+      description: Supergraph ConfigMap to update (must already exist)
+      type: string
+      default: {{ .Values.configMap.name }}
+    - name: config-map-namespace
+      description: Namespace that owns the ConfigMap
+      type: string
+      default: {{ .Values.configMap.namespace }}
+  workspaces:
+    - name: source
+      description: >-
+        Persistent checkout + composed artifact. Compose and publish are
+        separate TaskRuns, and the Rover plugin cache lives here, so bind a
+        PVC (chart renders `supergraph-release-source`), never an emptyDir.
+    - name: basic-auth
+      description: Optional git auth secret for a private repo (git_auth_secret)
+      optional: true
+  results:
+    - name: supergraph-sha256
+      description: SHA-256 of the supergraph read back from the ConfigMap
+      value: $(tasks.publish-configmap.results.configmap-sha256)
+  tasks:
+    - name: clone
+      when:
+        - input: $(params.repo-url)
+          operator: notin
+          values: [""]
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone-v1
+          - name: namespace
+            value: tekton-pipelines
+      workspaces:
+        - name: output
+          workspace: source
+        - name: basic-auth
+          workspace: basic-auth
+      params:
+        - name: url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.revision)
+
+    - name: seed
+      when:
+        - input: $(params.repo-url)
+          operator: in
+          values: [""]
+        - input: $(params.source-configmap)
+          operator: notin
+          values: [""]
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: supergraph-seed-v1
+          - name: namespace
+            value: tekton-pipelines
+      workspaces:
+        - name: source
+          workspace: source
+      params:
+        - name: SEED_CONFIGMAP
+          value: $(params.source-configmap)
+        - name: SUBDIRECTORY
+          value: $(params.subdirectory)
+
+    - name: compose-supergraph
+      runAfter:
+        - clone
+        - seed
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: supergraph-compose-v1
+          - name: namespace
+            value: tekton-pipelines
+      workspaces:
+        - name: source
+          workspace: source
+      params:
+        - name: SUBDIRECTORY
+          value: $(params.subdirectory)
+
+    - name: publish-configmap
+      runAfter:
+        - compose-supergraph
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: supergraph-configmap-v1
+          - name: namespace
+            value: tekton-pipelines
+      workspaces:
+        - name: source
+          workspace: source
+      params:
+        - name: SUBDIRECTORY
+          value: $(params.subdirectory)
+        - name: CONFIGMAP_NAME
+          value: $(params.config-map-name)
+        - name: CONFIGMAP_NAMESPACE
+          value: $(params.config-map-namespace)

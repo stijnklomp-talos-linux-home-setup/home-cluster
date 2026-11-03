@@ -1,0 +1,72 @@
+# apps-eks — future AWS EKS target. Same app-declaration model as
+# platform/gitops/applications/baremetal.yaml, but deploys to the EKS cluster
+# registered in ArgoCD under the name `eks`.
+#
+# To switch it on:
+#   1. Register the cluster: argocd cluster add <kube-context> --name eks
+#   2. Put service declarations in developer/apps/eks/ (copy from
+#      developer/apps/baremetal/ and adjust chartPath/imageRepository if the
+#      EKS chart differs)
+#
+# Until then it generates nothing (developer/apps/eks/ holds no declarations).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: apps-eks
+  namespace: argo
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - git:
+              repoURL: https://github.com/stijnklomp-talos-linux-home-setup/home-cluster
+              revision: main
+              requeueAfterSeconds: 60
+              files:
+                - path: developer/apps/eks/*.yaml
+          - list:
+              elements:
+                - env: dev
+                  autoSync: "true"
+                  revisionKey: targetRevisionDev
+                  tagKey: imageTagDev
+                - env: staging
+                  autoSync: "true"
+                  revisionKey: targetRevisionStaging
+                  tagKey: imageTagStaging
+                - env: prod
+                  autoSync: "false"
+                  revisionKey: targetRevisionProd
+                  tagKey: imageTagProd
+  template:
+    metadata:
+      name: '{{ .app }}-{{ .env }}'
+      namespace: argo
+    spec:
+      project: default
+      source:
+        repoURL: '{{ .repoURL }}'
+        targetRevision: '{{ index . .revisionKey }}'
+        path: '{{ .chartPath }}'
+        helm:
+          parameters:
+            - name: image.repository
+              value: '{{ .imageRepository }}'
+            - name: image.tag
+              value: '{{ index . .tagKey }}'
+      destination:
+        name: eks
+        namespace: '{{ .app }}-{{ .env }}'
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+  templatePatch: |
+    {{- if eq .autoSync "true" }}
+    spec:
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+    {{- end }}

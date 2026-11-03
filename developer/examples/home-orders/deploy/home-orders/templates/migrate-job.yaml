@@ -1,0 +1,62 @@
+# Applies the embedded sqlx migrations before the app can rely on the schema.
+# A post-install/post-upgrade hook: the Postgres Deployment exists by then, and
+# the init container waits for it to accept connections. Kept as a hook so
+# ArgoCD runs it on every sync; the image carries the `migrate` binary.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "home-orders.fullname" . }}-migrate
+  labels:
+    {{- include "home-orders.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "home-orders.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-postgres
+          image: {{ .Values.postgres.image | quote }}
+          command:
+            - sh
+            - -c
+            - >
+              until pg_isready -h {{ include "home-orders.fullname" . }}-postgres
+              -U {{ .Values.postgres.username }} -d {{ .Values.postgres.database }};
+              do echo waiting for postgres; sleep 2; done
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/app/migrate"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "home-orders.postgresSecretName" . }}
+                  key: DATABASE_URL
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

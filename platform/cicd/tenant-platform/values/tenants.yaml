@@ -1,0 +1,57 @@
+# THE REGISTRY — the single source of truth for PaC tenants.
+#
+# Every entry below produces exactly one tenant namespace plus its quota,
+# LimitRange, CiliumNetworkPolicy, tekton-bot ServiceAccount, npm-npmrc
+# ConfigMap, one Repository CR per repo and (when developers are listed) the
+# developer RBAC. Removing an entry prunes those objects on the next apply.
+#
+# Schema (wiki/cicd/pipelines/tenancy/spec.md):
+#   tenants:
+#     - owner: <github-owner>        # required, unique (case-insensitive)
+#       namespace: <dns-1123-label>  # required, unique, explicit alias; run namespace
+#       tier: build | deploy         # required
+#       developers: [<email>]        # optional; read-only RoleBindings
+#       repos:                       # required, may be empty
+#         - name: <dns-subdomain>    # unique per namespace
+#           url: <https://github.com/owner/repo>
+#       concurrencyLimit: 2          # optional, default 2
+#
+# Adding a tenant: add the entry, install the public GitHub App on the owner,
+# then `helmfile -l stage=tenancy apply`. PaC auto-configure is disabled, so an
+# unlisted repository never runs.
+#
+# Removing a tenant: delete the entry, then apply. The post-install/post-upgrade pruner
+# deletes the namespace and its Longhorn volumes (irreversible) and any stale
+# tekton-namespace-lister CRBs. Read the warning in README.md first.
+tenants:
+  - owner: stijnklomp-LAVE
+    namespace: stijnklomp-lave
+    tier: build
+    developers:
+      - stijnklomp1@hotmail.com
+    repos:
+      - name: test-app
+        url: https://github.com/stijnklomp-LAVE/test-app
+    concurrencyLimit: 2
+
+  # Operator organization: the deploy tenant. Every repository under the org
+  # shares the deploy capability level (API server egress, deploy secrets and
+  # terragrunt plan storage in this namespace only). The namespace is an
+  # explicit alias of the owner: GitHub owners may contain uppercase, namespace
+  # names may not.
+  - owner: stijnklomp-talos-linux-home-setup
+    namespace: stijnklomp-talos-linux-home-setup
+    tier: deploy
+    developers:
+      - stijnklomp1@hotmail.com
+    repos:
+      # Monorepo: one repo covers platform, developer docs and the example
+      # apps, so one Repository CR is enough. Individual repositories no
+      # longer exist.
+      - name: home-cluster
+        url: https://github.com/stijnklomp-talos-linux-home-setup/home-cluster
+      # Restricted repo (private). Requires the PaC GitHub App to be installed
+      # on it before events can arrive; harmless until then.
+      - name: home-cluster-internal
+        url: https://github.com/stijnklomp-talos-linux-home-setup/home-cluster-internal
+    concurrencyLimit: 2

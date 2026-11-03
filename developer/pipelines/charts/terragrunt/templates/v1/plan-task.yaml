@@ -1,0 +1,79 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: terragrunt-plan-v1
+  namespace: tekton-pipelines
+  annotations:
+    tekton.dev/categories: "Terragrunt"
+    tekton.dev/tags: "tf,tg,infra"
+    tekton.dev/displayName: "terragrunt-plan"
+spec:
+  description: >-
+    Runs `terragrunt plan` and stores the plan file on the shared plans PVC.
+    Runs as UID/GID 65532 under Pod Security 'restricted'; HOME/TMPDIR point
+    at /tmp because the alpine/terragrunt image is root-owned. The source and
+    plans workspaces must be writable by UID 65532 (PVC fsGroup 65532).
+  params:
+    - name: repo-name
+      type: string
+    - name: branch-name
+      type: string
+    - name: terragrunt-dir
+      type: string
+      default: ""
+    - name: image-version
+      type: string
+      default: "1.13.5"
+    - name: plan-file
+      type: string
+      default: "tfplan"
+  workspaces:
+    - name: source
+    - name: plans
+      description: Per-deploy-tenant 'home-terraform-plans' PVC where the plan file is stored
+  steps:
+    - name: terragrunt
+      image: alpine/terragrunt:$(params.image-version)
+      workingDir: $(workspaces.source.path)/$(params.terragrunt-dir)
+      env:
+        - name: HOME
+          value: /tmp
+        - name: TMPDIR
+          value: /tmp
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      script: |
+        #!/usr/bin/env sh
+        set -euo pipefail
+
+        PLAN_PATH="$(workspaces.source.path)/$(params.terragrunt-dir)/$(params.plan-file)"
+
+        echo "Running terragrunt plan in $(params.terragrunt-dir)"
+        echo "Plan will be written to: ${PLAN_PATH}"
+        terragrunt plan -lock-timeout=3m -input=false -out="${PLAN_PATH}"
+
+        UNIQUE_ID="$(cat /proc/sys/kernel/random/uuid)-$(date +%s)"
+        PLAN_KEY="$(params.repo-name)/$(params.branch-name)/$(params.plan-file)-${UNIQUE_ID}"
+
+        PLAN_DIR="$(workspaces.plans.path)/$(dirname "${PLAN_KEY}")"
+        mkdir -p "${PLAN_DIR}"
+        if [ ! -w "${PLAN_DIR}" ]; then
+          echo "ERROR: ${PLAN_DIR} is not writable by UID $(id -u)." >&2
+          echo "The plans PVC was probably written by the old root-based tasks." >&2
+          echo "Re-initialise it (or chown -R 65532:65532) once before using this task." >&2
+          exit 1
+        fi
+        cp "${PLAN_PATH}" "$(workspaces.plans.path)/${PLAN_KEY}"
+
+        printf '%s' "${PLAN_KEY}" > "$(results.plan-key.path)"
+        echo "PLAN_KEY=${PLAN_KEY}"
+  results:
+    - name: plan-key
+      description: Key (relative path) of the plan file inside the shared plans PVC

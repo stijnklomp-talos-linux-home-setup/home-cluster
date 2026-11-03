@@ -1,0 +1,68 @@
+# Manual supergraph release.
+#
+# home-graphql has no reachable git remote from this cluster, so the source is
+# a persistent PVC seeded from a ConfigMap. From the home-graphql checkout,
+# once per schema change:
+#
+#   tar -czf - supergraph.yaml schemas \
+#     | base64 | tr -d '\n' > /tmp/supergraph-source.b64
+#   kubectl -n home-graphql create configmap supergraph-source \
+#     --from-file=source.tgz.b64=/tmp/supergraph-source.b64 \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#   rm -f /tmp/supergraph-source.b64
+#
+# Then:
+#
+#   kubectl create -f charts/supergraph-release/usage-examples/v1/pipelinerun.yaml
+#   kubectl -n home-graphql get pipelinerun -w
+#
+# `repo-url` empty (the default) runs `supergraph-seed-v1`, which replaces the
+# checkout in the PVC from `source-configmap` on every run and keeps Rover's
+# plugin cache (`.rover-home/`). Set `repo-url` to clone instead; `source` must
+# be a PVC either way, because compose and publish are separate TaskRuns and
+# the composed artifact is handed over through the workspace. Do not switch
+# this to `volumeClaimTemplate`: a per-run claim starts empty.
+#
+# Install the gateway chart first. This release updates the existing
+# `home-graphql-supergraph` ConfigMap, has no permission to create it, and its
+# RBAC/PVC live in the gateway namespace. For an `<app>-<env>` install (e.g.
+# `home-graphql-dev`), change `namespace`, `config-map-namespace` and
+# `claimName` together; never point a dev run at the prod PVC/ConfigMap.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: supergraph-release-
+  namespace: home-graphql
+spec:
+  taskRunTemplate:
+    serviceAccountName: supergraph-release
+    podTemplate:
+      securityContext:
+        # Every step runs as UID/GID 65532; fsGroup makes the PVC writable by
+        # that identity.
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+  pipelineRef:
+    resolver: cluster
+    params:
+      - name: kind
+        value: pipeline
+      - name: name
+        value: supergraph-release-v1
+      - name: namespace
+        value: tekton-pipelines
+  params:
+    - name: repo-url
+      value: ""
+    - name: revision
+      value: main
+    - name: source-configmap
+      value: supergraph-source
+    - name: config-map-name
+      value: home-graphql-supergraph
+    - name: config-map-namespace
+      value: home-graphql
+  workspaces:
+    - name: source
+      persistentVolumeClaim:
+        claimName: supergraph-release-source

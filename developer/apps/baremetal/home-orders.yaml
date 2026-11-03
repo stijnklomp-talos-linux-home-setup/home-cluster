@@ -1,0 +1,27 @@
+# home-orders — one declaration per (service, target cluster). The
+# apps-baremetal ApplicationSet generates home-orders-dev / -staging / -prod
+# from this file.
+#
+# Keys are flat on purpose: the ApplicationSet git file generator flattens
+# nested YAML and the gitops-yaml-bump task edits these keys by name. CI owns
+# targetRevision<Env>/imageTag<Env> — merge to main bumps Dev, a v* tag bumps
+# Staging and Prod. Do not rename keys without updating the pipelines.
+#
+# SINGLE-ENVIRONMENT DECLARATION. The chart hardcodes the `home-orders`
+# namespace (Service DNS, CNP, supergraph routing), while this ApplicationSet
+# generates `<app>-<env>` namespaces. Until the chart is templated per
+# environment this is one environment, not a real dev/staging/prod rollout.
+# `valuesFile` selects the committed verification overlay (test JWKS). For
+# production, replace the Cognito placeholders in the chart values and set
+# `valuesFile: ""`.
+app: home-orders
+repoURL: https://github.com/stijnklomp-talos-linux-home-setup/home-cluster
+chartPath: developer/examples/home-orders/deploy/home-orders
+valuesFile: "values-verification.yaml"
+imageRepository: 192.168.1.210:5000/home-orders
+targetRevisionDev: main
+targetRevisionStaging: main
+targetRevisionProd: main
+imageTagDev: t19
+imageTagStaging: t19
+imageTagProd: t19

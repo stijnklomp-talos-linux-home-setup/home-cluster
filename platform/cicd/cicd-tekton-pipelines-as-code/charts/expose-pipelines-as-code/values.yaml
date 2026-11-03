@@ -1,0 +1,9 @@
+# Existing edge hostname; must stay byte-identical after the cutover so the
+# GitHub webhook configuration and the PaC controller URL keep working.
+host: "pipelines-as-code.192.168.1.200.sslip.io"
+
+gateway:
+  name: istio-internal
+  namespace: istio-ingress
+  # Port 443 is shared with five other listeners; bind by sectionName.
+  sectionName: https-pac

@@ -1,0 +1,5 @@
+tenants:
+  - owner: acme
+    namespace: acme
+    tier: sandbox
+    repos: []

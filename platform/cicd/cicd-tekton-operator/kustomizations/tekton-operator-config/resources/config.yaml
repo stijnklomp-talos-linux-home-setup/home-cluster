@@ -1,0 +1,119 @@
+# [https://tekton.dev/docs/operator/tektonconfig/](Tekton Config)
+# Operators/webhooks run on the Lenovo worker pool; TaskRun pods run on the CI node (Dell).
+# The control-plane node stays kube-system only (see platform/node/designate-node-roles.yaml).
+
+apiVersion: operator.tekton.dev/v1alpha1
+kind: TektonConfig
+metadata:
+  name: config
+spec:
+  profile: basic
+  targetNamespace: tekton-pipelines
+
+  config:
+    nodeSelector:
+      node-role.kubernetes.io/worker: ""
+    tolerations: []
+
+  pruner:
+    resources: [pipelinerun, taskrun]
+    schedule: "0 * * * *"
+    keep-since: 1440 # minutes = 24h
+    prune-per-resource: false
+
+  pipeline:
+    default-service-account: tekton-bot
+    default-timeout-minutes: 60
+    default-managed-by-label-value: tekton
+    disable-affinity-assistant: true
+    # Replaces disable-affinity-assistant: with `workspaces` (the operator
+    # default) Tekton refuses a TaskRun that binds more than one PVC
+    # ("more than one PersistentVolumeClaim is bound"). The terragrunt
+    # plan/apply pipelines bind `source` and `plans`.
+    coschedule: disabled
+    enable-api-fields: beta
+    enable-cluster-resolver: true
+    cluster-resolver-config:
+      default-namespace: tekton-pipelines
+      blocked-namespaces: "*"
+      # Single PaC run namespace: Repository CRs + all shared tasks live in
+      # 'tekton-pipelines' (per-run overrides use the PaC 'target-namespace'
+      # annotation and must be added here as well).
+      allowed-namespaces: "tekton-pipelines"
+    require-git-ssh-secret-known-hosts: true
+    running-in-environment-with-injected-sidecars: false
+    # Tenant namespaces enforce Pod Security 'restricted'. Tekton injects its
+    # own init/sidecar containers (prepare, place-scripts, results); with this
+    # flag false those have no securityContext and every tenant TaskRun is
+    # rejected by the namespace PSA before a step starts. The flag only
+    # hardens Tekton-injected containers — task step contexts come from the
+    # shared tasks. Pipelines v1.16 defaults it to true; the operator here
+    # installs v1.15, where it is still false.
+    set-security-context: true
+    # Send all TaskRun/PipelineRun pods to the CI node (the Dell) when it can
+    # fit them: soft nodeAffinity (weight 100) prefers it, spill to the other
+    # workers when it is full. The CI node taint is PreferNoSchedule — see
+    # platform/node/designate-node-roles.yaml.
+    #
+    # Task steps run as unprivileged users (UID 1000/65532) and write to PVC
+    # workspaces. fsGroup makes the mounted volume group-writable and adds the
+    # group to the container's supplementary groups. Do NOT set pod-level
+    # runAsNonRoot/runAsUser here — Tekton's init containers rely on their
+    # image users and would break.
+    default-pod-template: |
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: node-role.kubernetes.io/ci
+                    operator: Exists
+      tolerations:
+        - key: node-role.kubernetes.io/ci
+          operator: Exists
+          effect: PreferNoSchedule
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+
+  chain:
+    disabled: true # signing not used in the home cluster
+
+  trigger:
+    disabled: false
+    options:
+      deployments:
+        tekton-triggers-controller:
+          spec:
+            replicas: 1
+            template:
+              spec:
+                nodeSelector: { node-role.kubernetes.io/worker: "" }
+                tolerations: []
+        tekton-triggers-webhook:
+          spec:
+            replicas: 1
+            template:
+              spec:
+                nodeSelector: { node-role.kubernetes.io/worker: "" }
+                tolerations: []
+      webhookConfigurationOptions:
+        validation.webhook.triggers.tekton.dev:
+          failurePolicy: Fail
+          timeoutSeconds: 20
+          sideEffects: None
+        webhook.triggers.tekton.dev:
+          failurePolicy: Fail
+          timeoutSeconds: 20
+          sideEffects: None
+      configMaps:
+        config-logging-triggers:
+          data:
+            loglevel.controller: "info"
+            loglevel.webhook: "info"
+
+  result:
+    disabled: true
+    # TODO (later date): enable Tekton Results + log retention once the
+    # dashboard/log strategy for the home cluster is decided.

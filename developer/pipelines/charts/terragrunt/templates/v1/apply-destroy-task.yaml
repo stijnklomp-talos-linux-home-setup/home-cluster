@@ -1,0 +1,129 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: terragrunt-apply-destroy-v1
+  namespace: tekton-pipelines
+  annotations:
+    tekton.dev/categories: "Terragrunt"
+    tekton.dev/tags: "tf,tg,infra"
+    tekton.dev/displayName: "terragrunt-apply-destroy"
+spec:
+  description: >-
+    Applies a plan produced by terragrunt-plan-v1. Runs as UID/GID 65532 under
+    Pod Security 'restricted'; HOME/TMPDIR point at /tmp because the
+    alpine/terragrunt image is root-owned. The source and plans workspaces must
+    be writable by UID 65532 (PVC fsGroup 65532).
+  params:
+    - name: action # e.g., apply, destroy
+      type: string
+      default: "apply"
+    - name: plan-key
+      type: string
+    - name: terragrunt-dir
+      type: string
+      default: ""
+    - name: image-version
+      type: string
+      default: "1.13.5"
+    - name: plan-file
+      type: string
+      default: "tfplan"
+  workspaces:
+    - name: source
+    - name: plans
+      description: Per-deploy-tenant 'home-terraform-plans' PVC holding the plan file
+  steps:
+    - name: copy-plan
+      image: alpine/terragrunt:$(params.image-version)
+      workingDir: $(workspaces.source.path)/$(params.terragrunt-dir)
+      env:
+        - name: HOME
+          value: /tmp
+        - name: TMPDIR
+          value: /tmp
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      script: |
+        #!/usr/bin/env sh
+        set -euo pipefail
+
+        if [ "$(params.action)" != "apply" ]; then
+          echo "ERROR: Unsupported action: $(params.action). Must be 'apply' (destroy requires a re-planned apply)." >&2
+          exit 1
+        fi
+
+        if [ -z "$(params.plan-key)" ]; then
+          echo "ERROR: 'plan-key' parameter must not be empty." >&2
+          exit 1
+        fi
+
+        PLAN_SRC="$(workspaces.plans.path)/$(params.plan-key)"
+        if [ ! -f "${PLAN_SRC}" ]; then
+          echo "ERROR: Plan file not found at ${PLAN_SRC}. Did the plan PipelineRun complete?" >&2
+          exit 1
+        fi
+
+        cp "${PLAN_SRC}" "$(params.plan-file)"
+        echo "Plan copied to $(params.plan-file)"
+    - name: terragrunt
+      image: alpine/terragrunt:$(params.image-version)
+      workingDir: $(workspaces.source.path)/$(params.terragrunt-dir)
+      env:
+        - name: HOME
+          value: /tmp
+        - name: TMPDIR
+          value: /tmp
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      script: |
+        #!/usr/bin/env sh
+        set -euo pipefail
+
+        if [ ! -f "$(params.plan-file)" ]; then
+          echo "ERROR: Plan file $(params.plan-file) not found. Potential failure with copy-plan step." >&2
+          exit 1
+        fi
+
+        echo "Running terragrunt $(params.action) in $(params.terragrunt-dir)"
+        terragrunt apply -input=false -auto-approve "$(params.plan-file)"
+    # Runs only when the apply succeeded (Tekton stops on failure), so a failed
+    # apply keeps its plan on the shared PVC for debugging. Stray plans that are
+    # never applied are swept by the plan-cleanup CronJob (terragrunt-secrets).
+    - name: cleanup-plan
+      image: alpine/terragrunt:$(params.image-version)
+      env:
+        - name: HOME
+          value: /tmp
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      script: |
+        #!/usr/bin/env sh
+        set -euo pipefail
+
+        PLAN_SRC="$(workspaces.plans.path)/$(params.plan-key)"
+        rm -f "${PLAN_SRC}"
+        echo "Removed plan from the shared PVC: ${PLAN_SRC}"
+
+# TODO: The shared PVC is RWO; only one plan+apply pair may run at a time
+#       until plan/apply gets proper locking (e.g. an object store).

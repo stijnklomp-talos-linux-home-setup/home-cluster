@@ -1,0 +1,99 @@
+# ArgoCD v3.5.3 (chart 10.9.2) — GitOps CD for home-cluster-1.
+# App-of-apps manifests live in the home-cluster monorepo (ApplicationSet);
+# this chart is the day-1 install path. SSO = native OIDC -> Cognito
+# ('argocd' client, AWS SSO only). Real secrets flow via
+# secrets/argocd-secrets.yaml (gitignored) — merge order: values, then secrets.
+
+global:
+  # Worker pool (node-role-groups ADR); CI node stays Tekton-preferred
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  tolerations: []
+
+# --- SSO (native OIDC -> Cognito) + RBAC + declarative repos --------------
+configs:
+  cm:
+    url: https://argocd.192.168.1.200.sslip.io
+
+    # Native OIDC: ArgoCD talks to Cognito directly (no oauth2-proxy in front —
+    # ArgoCD v3 has no header auth). The 'argocd' Cognito client is AWSSSO-only,
+    # so the hosted UI shows only "Continue with AWS SSO". Callback is
+    # https://argocd.192.168.1.200.sslip.io/auth/callback (registered in the client).
+    # oidc.config (issuer/clientID/clientSecret) lives in
+    # secrets/argocd-secrets.yaml — see the example there.
+
+    # Declarative repo credentials (one classic PAT for all owners — see
+    # TODO.md Option A): the PAT itself lives in the argocd-github-creds secret
+    # (secrets/). Templates match by URL prefix, so app repos under the org and
+    # under the personal account both resolve without per-repo entries.
+    credentialTemplates: |
+      github-creds:
+        url: https://github.com/stijnklomp-talos-linux-home-setup
+        usernameSecret:
+          name: argocd-github-creds
+          key: username
+        passwordSecret:
+          name: argocd-github-creds
+          key: password
+      github-creds-personal:
+        url: https://github.com/stijnklomp-LAVE
+        usernameSecret:
+          name: argocd-github-creds
+          key: username
+        passwordSecret:
+          name: argocd-github-creds
+          key: password
+    repositories: |
+      - type: git
+        url: https://github.com/stijnklomp-talos-linux-home-setup/home-cluster
+        credentialTemplate: github-creds
+      # The monorepo holds both the GitOps declarations
+      # (developer/apps/) and the app charts (developer/examples/), so one
+      # entry covers everything under the org. The personal-account template
+      # stays for external app repos (e.g. stijnklomp-LAVE/test-app).
+
+  rbac:
+    # Authenticated users can read by default; admins get full control
+    policy.default: role:readonly
+    policy.csv: |
+      g, stijnklomp1@hotmail.com, role:admin
+
+  params:
+    # Serve plain HTTP behind the internal Istio gateway: TLS terminates in
+    # the Gateway listener (home-issuer certificate `internal-tls`), so
+    # ArgoCD must not run its own TLS or Ingress (ticket #12 edge cutover).
+    server.insecure: "true"
+
+  secret:
+    extra:
+      # real value via secrets/argocd-secrets.yaml (oidc.argocd.oidcSecret)
+      oidc.argocd.oidcSecret: ""
+
+# --- Server (UI) -----------------------------------------------------------
+server:
+  replicas: 1
+  # No server.certificate and no server.ingress: home-istio owns the Gateway,
+  # the multi-SAN Certificate and the redirect; charts/argocd-route owns the
+  # HTTPRoute in this namespace. Keeping either enabled here would recreate an
+  # ingress-nginx Ingress (and a competing TLS secret) after the cutover.
+  certificate:
+    enabled: false
+  ingress:
+    enabled: false
+
+# --- Components ------------------------------------------------------------
+dex:
+  enabled: false # native OIDC only — no Dex
+
+controller:
+  replicas: 1
+
+repoServer:
+  replicas: 1
+
+applicationSet:
+  enabled: true
+  replicas: 1
+
+notifications:
+  enabled: false

@@ -1,0 +1,4 @@
+# Local compose cache (Rover plugin volume is external; this covers ad-hoc runs)
+.rover/
+node_modules/
+*.tgz

@@ -1,0 +1,142 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: gitops-yaml-bump-v1
+  namespace: tekton-pipelines
+  labels:
+    app.kubernetes.io/version: "0.2"
+  annotations:
+    tekton.dev/categories: GitOps
+    tekton.dev/displayName: "Set YAML keys in the GitOps repo (CI -> CD bridge)"
+    tekton.dev/platforms: "linux/amd64,linux/arm64"
+spec:
+  description: >-
+    Clones the GitOps source repo (home-cluster), sets one or more flat top-level YAML
+    keys in an app declaration file (e.g. imageTagDev=abc123), commits and
+    pushes. ArgoCD's ApplicationSet picks the change up on its next poll and
+    syncs the environment — the CI -> CD bridge between Tekton and ArgoCD.
+    Runs as UID/GID 65532 under Pod Security 'restricted'; the git repository
+    lives in Tekton's shared /workspace emptyDir and HOME is /tmp.
+  params:
+    - name: REPO_URL
+      description: GitOps repo to edit (home-cluster)
+    - name: REVISION
+      description: Branch to edit
+      default: main
+    - name: FILE
+      description: Path to the app declaration inside the GitOps repo
+    - name: SET
+      description: Flat top-level YAML keys to set, each as key=value
+      type: array
+    - name: GIT_USERNAME
+      description: Committer name
+      default: tekton-bot
+    - name: GIT_EMAIL
+      description: Committer email
+      default: tekton-bot@home-cluster-1
+  workspaces:
+    - name: gitops-auth
+      description: Secret with `username` + `password` (PAT with contents:write on the GitOps repo)
+      mountPath: /auth
+  steps:
+    - name: clone
+      image: docker.io/alpine/git:2.47.2
+      workingDir: /workspace
+      env:
+        - name: HOME
+          value: /tmp
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      script: |
+        set -e
+        # Tekton's /workspace emptyDir is root-owned; git 2.35+ refuses to
+        # operate on a repository it considers owned by another user.
+        git config --global --add safe.directory /workspace
+        TOKEN="$(cat "$(workspaces.gitops-auth.path)/password")"
+        git init
+        git -c http.extraHeader="Authorization: Bearer ${TOKEN}" remote add origin "$(params.REPO_URL)"
+        git -c http.extraHeader="Authorization: Bearer ${TOKEN}" fetch --depth 1 origin "$(params.REVISION)"
+        git checkout -b "$(params.REVISION)" FETCH_HEAD
+    - name: set-values
+      image: docker.io/library/python:3.12-alpine
+      workingDir: /workspace
+      env:
+        - name: HOME
+          value: /tmp
+      args:
+        - "$(params.SET[*])"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      script: |
+        set -e
+        python3 - "$@" <<'EOF'
+        import re, sys
+
+        path = "$(params.FILE)"
+        pairs = [a for a in sys.argv[1:] if a.strip()]
+        if not pairs:
+            print("ERROR: no key=value entries given in SET", file=sys.stderr)
+            sys.exit(1)
+
+        with open(path) as f:
+            content = f.read()
+
+        for pair in pairs:
+            key, _, value = pair.partition("=")
+            if not key or not value:
+                print(f"ERROR: invalid SET entry '{pair}' (expected key=value)", file=sys.stderr)
+                sys.exit(1)
+            new, n = re.subn(rf"(?m)^{re.escape(key)}:.*$", f"{key}: {value}", content)
+            if n == 0:
+                print(f"ERROR: '{key}' not found in {path}", file=sys.stderr)
+                sys.exit(1)
+            content = new
+            print(f"set {key}={value} in {path}")
+
+        with open(path, "w") as f:
+            f.write(content)
+        EOF
+    - name: commit-and-push
+      image: docker.io/alpine/git:2.47.2
+      workingDir: /workspace
+      env:
+        - name: HOME
+          value: /tmp
+      args:
+        - "$(params.SET[*])"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      script: |
+        set -e
+        git config --global --add safe.directory /workspace
+        TOKEN="$(cat "$(workspaces.gitops-auth.path)/password")"
+        git config user.name "$(params.GIT_USERNAME)"
+        git config user.email "$(params.GIT_EMAIL)"
+        git add "$(params.FILE)"
+        if git diff --cached --quiet; then
+          echo "no changes to $(params.FILE); skipping commit"
+        else
+          git commit -m "chore: $(params.FILE): $* [skip ci]"
+          git -c http.extraHeader="Authorization: Bearer ${TOKEN}" push origin "$(params.REVISION)"
+        fi

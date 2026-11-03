@@ -1,0 +1,76 @@
+# home-users chart values.
+#
+# The defaults describe the in-cluster reference deployment: local registry
+# image, bundled Postgres on Longhorn, ambient namespace. The GraphQL JWT
+# values are placeholders for the Cognito pool (ticket #17); set
+# `testJwks.enabled=true` (or use values-verification.yaml) to point the
+# service at the in-cluster test JWKS server instead.
+
+image:
+  repository: 192.168.1.210:5000/home-users
+  tag: t19
+  pullPolicy: Always
+
+replicaCount: 1
+
+service:
+  port: 80
+
+config:
+  appEnv: production
+  requestLogLevel: info
+  appLogLevel: info
+  cacheDisabled: "true"
+  rabbitDisabled: "true"
+  graphqlEnabled: "true"
+  # Production points at the Cognito pool. The issuer/JWKS/client id are
+  # deployment input; replace the `<region>`/`<pool>`/`<client-id>` placeholders.
+  # Cognito *access* tokens carry `client_id`, not `aud`, so the audience
+  # check is disabled and the client id is checked instead.
+  graphqlJwksUrl: https://cognito-idp.<region>.amazonaws.com/<pool>/.well-known/jwks.json
+  graphqlJwtIssuer: https://cognito-idp.<region>.amazonaws.com/<pool>
+  graphqlJwtAudience: ""
+  graphqlJwtClientId: <client-id>
+
+networkPolicy:
+  # Namespaces allowed to call the GraphQL endpoint in addition to this one.
+  # The Hive Gateway (home-graphql) is the only caller outside the namespace;
+  # REST callers and host probes are unaffected. Egress is not widened.
+  ingressNamespaces:
+    - home-graphql
+
+postgres:
+  image: postgres:18.6-alpine
+  database: home_users
+  username: home_users
+  # Empty means: reuse the password in the existing Secret, or generate one
+  # with randAlphaNum on first install. Never commit a real password.
+  password: ""
+  storageClassName: longhorn
+  storage: 1Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Test-only in-cluster JWKS server: serves the public half of the committed
+# GraphQL test key. Never enable this in production; it exists so the live
+# deployment can prove the JWT validation path before Cognito lands.
+testJwks:
+  enabled: false
+  image: nginxinc/nginx-unprivileged:1.29-alpine
+  issuer: https://test-issuer.home.test
+  audience: home-users
+  # Test tokens carry `aud`; leave the Cognito client-id check unset.
+  clientId: ""
