@@ -21,7 +21,7 @@ Overview of this component — see `README.md` for prose.
 
 ## Structure
 
-- `root.hcl` — cluster facts in `locals` (endpoint `https://192.168.1.107:6443`, nodes, versions `v1.36.4`/`v1.13.9`), `remote_state` (S3, shared bucket), talos provider generated.
+- `root.hcl` — cluster facts in `locals` (endpoint `https://192.168.1.107:6443`, nodes, versions `v1.36.4`/`v1.13.9`), `remote_state` (S3, shared bucket), talos provider generated. The state key includes the component path because bare `path_relative_to_include()` (`prod`) collides with the other `platform/infra` components in the same bucket.
 - `modules/talos-machine-config/main.tf` — ported to talos provider 0.11 API: machine configs are `data.talos_machine_configuration` (with `machine_type`); `talos_machine_configuration_apply` applies them to nodes.
 - `prod/terragrunt.hcl` — inputs from root locals.
 

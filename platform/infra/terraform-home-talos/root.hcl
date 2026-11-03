@@ -20,7 +20,10 @@ remote_state {
   }
   config = {
     bucket       = "home-terraform-state-${local.aws_account_id}"
-    key          = "${path_relative_to_include()}/terraform.tfstate"
+    # MUST be unique per component. `path_relative_to_include()` alone is just
+    # "prod", which collides with the other platform/infra components in the
+    # same bucket (terraform-remote-state, terraform-cognito-federation).
+    key          = "platform/infra/terraform-home-talos/${path_relative_to_include()}/terraform.tfstate"
     region       = "eu-west-1"
     encrypt      = true
     use_lockfile = true
