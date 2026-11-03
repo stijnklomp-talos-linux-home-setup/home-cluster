@@ -37,6 +37,7 @@ reads them.
 | `applications/baremetal.yaml` | ApplicationSet `apps-baremetal`: matrix (git file generator `developer/apps/baremetal/*.yaml` × list `dev/staging/prod`); `goTemplate`, `requeueAfterSeconds: 60`; env semantics live here |
 | `applications/eks.yaml` | future EKS ApplicationSet (`destination.name: eks`); no-op while `developer/apps/eks/` is empty |
 | `templates/service-declaration.yaml.tpl` | declaration skeleton for new services |
+| `templates/service-declaration.external-repo.yaml` | example declaration for an app that stays in its own repo (inert — `templates/` is not scanned) |
 | `developer/apps/<cluster>/<app>.yaml` | service declaration — flat keys (`app`, `repoURL`, `chartPath`, `valuesFile`, `imageRepository`, `targetRevision<Env>`, `imageTag<Env>`); edited by the Tekton `gitops-yaml-bump-v1` task |
 
 ## Conventions & rules
@@ -66,7 +67,7 @@ reads them.
 - [ ] No placeholder replaced with a fabricated value
 
 ## Examples
-`developer/apps/baremetal/test-app.yaml` is the reference declaration (external repo); `applications/baremetal.yaml` is the reference ApplicationSet.
+`templates/service-declaration.external-repo.yaml` is the reference declaration for an app that stays in its own repo (not scanned by the generator, so it deploys nothing); `applications/baremetal.yaml` is the reference ApplicationSet.
 
 ## When stuck
 - ArgoCD troubleshooting: Application events + `kubectl get applicationset apps-baremetal -n argo -o yaml` (status.conditions).

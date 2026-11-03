@@ -1,0 +1,20 @@
+# EXAMPLE — declaration for an app that stays in its own GitHub repo.
+#
+# This file lives in templates/ on purpose: the ApplicationSet only scans
+# developer/apps/<cluster>/, so this generates nothing. Copy it there (or run
+# developer/scripts/new-service.sh) when you actually want to deploy it.
+#
+# An app inside this monorepo differs in exactly two keys:
+#   repoURL:   https://github.com/stijnklomp-talos-linux-home-setup/home-cluster
+#   chartPath: developer/examples/<app>/deploy/<app>
+app: test-app
+repoURL: https://github.com/stijnklomp-LAVE/test-app
+chartPath: deploy/hello-app
+valuesFile: ""
+imageRepository: docker.io/stijnklomp/test-app
+targetRevisionDev: main
+targetRevisionStaging: main
+targetRevisionProd: main
+imageTagDev: latest
+imageTagStaging: latest
+imageTagProd: latest
