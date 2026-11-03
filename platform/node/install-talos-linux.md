@@ -67,16 +67,11 @@ The full rollout order (apply Cilium, remove the residual Flannel DaemonSet,
 restart workloads) and the rollback procedure live in
 `platform/cluster/home-cilium/README.md`.
 
-The stored `controlplane.yaml` / `worker.yaml` copies in
-`home-cluster-1-config/` are not updated by `talosctl patch machineconfig`.
-Patch them too before reusing them (never commit them):
-
-```sh
-talosctl machineconfig patch home-cluster-1-config/controlplane.yaml \
-  --patch @patches/cni-cilium.yaml -o /tmp/controlplane.yaml
-mv /tmp/controlplane.yaml home-cluster-1-config/controlplane.yaml
-# repeat for worker.yaml
-```
+The stored `controlplane.yaml` / `worker.yaml` copies have been retired in
+favour of `platform/infra/terraform-home-talos/`. Do not hand-patch a local
+copy: add the change to that module's `config_patches` (or `patches/`), then
+regenerate with `terragrunt apply` and `terragrunt output -raw
+machine_config_controlplane`.
 
 > Talos `v1.14+` replaces `cluster.network.cni` with a `KubeFlannelCNIConfig`
 > `$patch: delete` document. This cluster is pinned to Talos `v1.13.9`, so keep

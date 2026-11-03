@@ -15,7 +15,7 @@ One **service declaration** per (service, target cluster):
 ```
 platform/gitops/
   applications/
-    baremetal.yaml        # ApplicationSet ← developer/apps/baremetal/*.yaml × [dev, staging, prod]
+    baremetal.yaml        # ApplicationSet ← developer/apps/baremetal/*.yaml × [dev, staging]
     eks.yaml              # future EKS target (no-op until the cluster is registered)
   templates/
     service-declaration.yaml.tpl
@@ -26,9 +26,15 @@ developer/apps/
   eks/<app>.yaml          # future: EKS declarations
 ```
 
-Adding `developer/apps/baremetal/<app>.yaml` generates `<app>-dev`, `<app>-staging` and
-`<app>-prod` (namespace `argo`) on the next ApplicationSet poll. Removing the
-file prunes all three. There is no per-env manifest to maintain.
+Adding `developer/apps/baremetal/<app>.yaml` generates `<app>-dev` and
+`<app>-staging` (namespace `argo`) on the next ApplicationSet poll. Removing the
+file prunes both. There is no per-env manifest to maintain.
+
+There is **no prod Application** at the moment. Every current declaration is
+single-environment, so prod Apps stayed permanently `OutOfSync/Missing`; the
+`prod` list element is removed from the ApplicationSet until the charts are
+templated per environment. The pipelines still record `imageTagProd` /
+`targetRevisionProd`, so reintroducing prod is a one-line change.
 
 ## Environments and triggers
 
@@ -36,12 +42,10 @@ file prunes all three. There is no per-env manifest to maintain.
 |---|---|---|---|
 | dev | `<app>-dev` | merge to `main` → Tekton builds `:<sha>` and sets `imageTagDev` | automatic (prune + selfHeal) |
 | staging | `<app>-staging` | push a `v*` tag → Tekton builds `:<git_tag>` and sets `imageTagStaging`/`targetRevisionStaging` | automatic |
-| prod | `<app>-prod` | same `v*` release records `imageTagProd`/`targetRevisionProd` | **manual Sync in ArgoCD** (the production gate) |
 
-Namespaces are `<app>-dev` / `<app>-staging` / `<app>-prod` (created by ArgoCD
-via `CreateNamespace=true`). Dev tracks the app repo's `main`; staging and prod
-pin the release tag, so an environment deploys exactly the commit that was
-validated. Prod rollback = sync an older revision from the Application history.
+Namespaces are `<app>-dev` / `<app>-staging` (created by ArgoCD via
+`CreateNamespace=true`). Dev tracks the app repo's `main`; staging pins the
+release tag, so it deploys exactly the commit that was validated.
 
 CI → CD is wired by the Tekton `app-release-v1` pipeline (see
 `developer/pipelines/charts/app-release/usage-examples/v1/`): the
@@ -63,11 +67,10 @@ in each chart's `values.yaml` and set `valuesFile: ""` in the declaration.
 **Single environment for the GraphQL stack.** These charts and the composed
 supergraph use the fixed namespaces `home-users`, `home-orders` and
 `home-graphql` (Service DNS, Cilium policies, `supergraph.yaml` routing),
-while the ApplicationSet generates `<app>-<env>` namespaces and three
-Applications per declaration. Until the stack is templated per environment,
-the GraphQL declarations are a single-environment entry, not a real
-dev/staging/prod rollout; deploying all three would point three Applications
-at the same chart and namespaces. This is documented rather than faked.
+while the ApplicationSet generates `<app>-<env>` namespaces. Until the stack
+is templated per environment the declarations are a single-environment entry,
+not a real dev/staging/prod rollout; this is why the `prod` environment is not
+generated (see above). This is documented rather than faked.
 
 **Repo access.** Chart sources and declarations live in the same repo
 (`home-cluster`), so one ArgoCD repo credential covers every declaration.

@@ -6,7 +6,7 @@
 ArgoCD orchestration for `home-cluster-1` (namespace `argo`): app-of-apps via
 `bootstrap.yaml` plus one ApplicationSet per target cluster
 (`applications/<cluster>.yaml`) that expands service declarations into
-`<app>-dev` / `-staging` / `-prod` Applications. Bare-metal now, EKS later.
+`<app>-dev` / `-staging` Applications. Bare-metal now, EKS later.
 
 **The declarations are not here** — they are the developer contract and live in
 `developer/apps/<cluster>/<app>.yaml`. This directory owns the machinery that
@@ -26,7 +26,7 @@ reads them.
 | Add a service | `developer/scripts/new-service.sh --app <app> --repo <url> --image <registry/image> [--chart-path deploy/<app>] [--cluster baremetal\|eks] [--app-repo-dir <dir>]` |
 | Validate YAML offline | `docker run --rm -v "$PWD:/ws:ro" -w /ws --entrypoint /bin/sh ghcr.io/helmfile/helmfile:latest -c 'yq -e "." platform/gitops/applications/*.yaml developer/apps/*/*.yaml'` |
 | Inspect generated apps | `kubectl get applications -n argo` (container per workspace rules) |
-| Release prod | click **Sync** on `<app>-prod` in ArgoCD (or `argocd app sync <app>-prod`) |
+| Release prod | not generated: declarations are single-environment; re-add the `prod` list element in `applications/baremetal.yaml` once charts are per-env |
 | Register EKS | `argocd cluster add <kube-context> --name eks` |
 
 ## Key files
@@ -34,7 +34,7 @@ reads them.
 | Path | Notes |
 |------|-------|
 | `bootstrap.yaml` | applied once via kubectl (NOT under `applications/`, so it cannot prune itself); points at `platform/gitops/applications` |
-| `applications/baremetal.yaml` | ApplicationSet `apps-baremetal`: matrix (git file generator `developer/apps/baremetal/*.yaml` × list `dev/staging/prod`); `goTemplate`, `requeueAfterSeconds: 60`; env semantics live here |
+| `applications/baremetal.yaml` | ApplicationSet `apps-baremetal`: matrix (git file generator `developer/apps/baremetal/*.yaml` × list `dev/staging`); `goTemplate`, `requeueAfterSeconds: 60`; env semantics live here |
 | `applications/eks.yaml` | future EKS ApplicationSet (`destination.name: eks`); no-op while `developer/apps/eks/` is empty |
 | `templates/service-declaration.yaml.tpl` | declaration skeleton for new services |
 | `templates/service-declaration.external-repo.yaml` | example declaration for an app that stays in its own repo (inert — `templates/` is not scanned) |
@@ -42,12 +42,12 @@ reads them.
 
 ## Conventions & rules
 
-- **One declaration per (service, target cluster).** Adding the file creates 3 Applications; removing it prunes them. Never hand-create per-env Application manifests.
+- **One declaration per (service, target cluster).** Adding the file creates 2 Applications (dev, staging); removing it prunes them. Never hand-create per-env Application manifests.
 - **Flat declaration keys only.** The git file generator flattens nested YAML, and `gitops-yaml-bump-v1` rewrites `key: value` lines by name. Renaming `targetRevision<Env>`/`imageTag<Env>` breaks the CD pipelines.
 - **`repoURL` is the monorepo** for apps in this repo; `chartPath` then points into it (`developer/examples/<app>/deploy/<app>`). An external app keeps its own `repoURL`.
 - **Every declaration has `valuesFile`.** The ApplicationSet renders `helm.valueFiles` only when it is non-empty (`""` = chart defaults). The three GraphQL declarations use `values-verification.yaml`.
 - **The GraphQL stack is single-environment.** Charts/supergraph/CNPs hardcode `home-users`/`home-orders`/`home-graphql` while the generator creates `<app>-<env>` namespaces. Do not claim multi-env support for these declarations until the charts are templated per env.
-- **Env semantics** (dev auto, staging auto, prod manual) are encoded in `applications/<cluster>.yaml`'s list generator — change them in one place.
+- **Env semantics** (dev auto, staging auto; prod not generated) are encoded in `applications/<cluster>.yaml`'s list generator — change them in one place.
 - **Prod is manually synced** (no `automated` syncPolicy); CI only records the release tag. Manual sync does not prune by default.
 - **Chart changes are never hand-applied.** Tekton bumps tags here; ArgoCD deploys from the app chart at the pinned revision.
 - `bootstrap.yaml` stays out of the synced path (`applications/`) — otherwise it prunes itself.

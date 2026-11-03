@@ -160,7 +160,7 @@ A minor-only version auto-resolves to its latest patch:
 # e.g. ./upgrade-k8s.yaml v1.36 cluster-config/ ./root.hcl # (resolves to latest patch version e.g. v1.36.4)
 ```
 
-- `<CLUSTER_CONFIG_DIR>` — **required** (the script errors if omitted): the directory holding your stored `controlplane.yaml`/`worker.yaml` (shown above as `cluster-config/`; here: `home-cluster-1-config/`). After the upgrade the script syncs their component image versions (kube-apiserver/controller-manager/scheduler/kube-proxy/kubelet) to the new version.
+- `<CLUSTER_CONFIG_DIR>` — **required** (the script errors if omitted): a directory holding `controlplane.yaml`/`worker.yaml`. Those files are no longer stored: generate them into a temp dir from Terraform first (`terragrunt output -raw machine_config_controlplane`, `terragrunt output -json machine_config_workers`). After the upgrade the script syncs their component image versions (kube-apiserver/controller-manager/scheduler/kube-proxy/kubelet) to the new version.
 - `[ROOT_HCL]` — optional: pass the `root.hcl` path (shown above as `./root.hcl`) to also sync its `k8s_version`. Omit to skip.
 
 Runs a dry run first, then the real upgrade against the control plane.

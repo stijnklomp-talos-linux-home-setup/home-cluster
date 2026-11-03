@@ -27,7 +27,7 @@ Overview of this component — see `README.md` for prose.
 
 ## Conventions & rules
 
-- `talos_machine_secrets.this` holds the live CA material and was **imported** from `home-cluster-1-config/secrets.yaml` (outside the repo). Never let an unimported `apply` create it: that generates a new CA/token set and breaks the cluster.
+- `talos_machine_secrets.this` holds the live CA material (imported from the now-deleted `home-cluster-1-config/secrets.yaml`). Terraform state is the **only** copy — never let an unimported `apply` create it, and never run `talosctl gen secrets` expecting a recovery path.
 - talosconfig/kubeconfig come from `talos_client_configuration` / `talos_cluster_kubeconfig` data sources, so `plan` needs LAN access to the control plane node. Both outputs are sensitive.
 - The Talos v1.13 contract defaults already cover kubePrism, hostDNS, UKI cmdline, quotas, PodSecurity, audit policy and the control-plane label. `config_patches` only add the installer image + control-plane install disk. Re-check this against the live config before claiming full coverage.
 - `talos_machine_configuration_apply` is intentionally not wired. Do not add it without user approval; validate with `--mode try` first.

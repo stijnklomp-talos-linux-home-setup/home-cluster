@@ -47,7 +47,7 @@ duplicated into this repo — see [Where credentials live](#where-credentials-li
 
 Never in this repo. Live material stays outside the working tree:
 
-- `../home-cluster-1-config/` — kubeconfig, talosconfig, machine configs (sibling directory, ignored by git).
+- `../home-cluster-1-config/` — kubeconfig + talosconfig only (sibling directory, ignored by git). Machine configs and the cluster CA/secrets are now managed by `platform/infra/terraform-home-talos/`; the CA lives in that unit's S3 Terraform state.
 - Component-local `secrets/` — each is gitignored; only `*.example.yaml` is committed.
 - The restricted repo — `home-cluster-internal`.
 

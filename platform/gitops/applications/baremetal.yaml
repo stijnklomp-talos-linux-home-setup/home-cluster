@@ -7,9 +7,14 @@
 # Environment semantics:
 #   dev     -> bump imageTagDev on merge to main (Tekton) -> auto-sync
 #   staging -> bump imageTagStaging/targetRevisionStaging on a v* tag -> auto-sync
-#   prod    -> imageTagProd/targetRevisionProd recorded on the same tag, but NO
-#              automated syncPolicy: a human clicks Sync in ArgoCD to deploy
-#              (manual production gate; rollback = sync an older revision).
+#
+# There is deliberately NO prod Application yet. Every current declaration is
+# single-environment (the GraphQL stack uses the fixed home-users/home-orders/
+# home-graphql namespaces), so prod Apps sat permanently OutOfSync/Missing and
+# syncing one would create duplicate *-prod namespaces. Re-add the `prod` list
+# element below once the charts are templated per environment. The pipelines
+# already record imageTagProd/targetRevisionProd, so nothing else needs to
+# change when that happens.
 #
 # The auto-sync flag is applied via templatePatch (spec.template fields are
 # string-templated only; templatePatch supports conditionals).
@@ -43,10 +48,6 @@ spec:
                   autoSync: "true"
                   revisionKey: targetRevisionStaging
                   tagKey: imageTagStaging
-                - env: prod
-                  autoSync: "false"
-                  revisionKey: targetRevisionProd
-                  tagKey: imageTagProd
   template:
     metadata:
       name: '{{ .app }}-{{ .env }}'

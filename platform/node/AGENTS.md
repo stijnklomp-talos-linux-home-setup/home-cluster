@@ -19,7 +19,17 @@ docker run --rm -v "$PWD/home-cluster-1-config:/cfg:ro" \
   --kubeconfig /cfg/kubeconfig <args>
 ```
 
-`$PWD` assumes the workspace root; use the absolute path otherwise. Scripts default to `./talosconfig`/`./worker.yaml` — point `TALOSCONFIG`/`WORKER_CONFIG` at `home-cluster-1-config/` when running from this repo dir (or run from there).
+`$PWD` assumes the workspace root; use the absolute path otherwise. Scripts default to `./talosconfig`/`./worker.yaml`, but the plaintext machine configs no longer exist — they are managed by `platform/infra/terraform-home-talos/`.
+
+To feed a script that needs them, export the generated files first:
+
+```sh
+cd platform/infra/terraform-home-talos/prod
+terragrunt output -raw machine_config_controlplane > /tmp/controlplane.yaml
+terragrunt output -json machine_config_workers | jq -r '.["192.168.1.108"]' > /tmp/worker.yaml
+```
+
+then point `WORKER_CONFIG` / the script's config-dir argument at `/tmp`.
 
 **The cluster is LIVE and always in use (production-like) — never assume it is idle.** Read-only commands (`get`, `list`, `describe`, `logs`, `events`, `version`, `health`) are always allowed. **Every other command — any write/mutating action** (`apply-config`, `upgrade`, `reset`, `remove-member`, `drain`, `cordon`, `uncordon`, `reboot`, `shutdown`, `kubectl apply/delete/scale/exec`, etc.) **must be confirmed with the user first**, even if it looks harmless.
 

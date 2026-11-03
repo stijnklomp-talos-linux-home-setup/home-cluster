@@ -49,7 +49,9 @@ developer/scripts/new-service.sh \
 ```
 
 That writes `apps/baremetal/my-app.yaml`. Commit it and ArgoCD generates
-`my-app-dev`, `my-app-staging` and `my-app-prod` on its next poll.
+`my-app-dev` and `my-app-staging` on its next poll. (There is no `*-prod`
+Application at the moment — the current declarations are single-environment;
+prod is reintroduced once charts are templated per environment.)
 
 The declaration keys are flat and load-bearing: CI rewrites `imageTag<Env>` and
 `targetRevision<Env>` by name. Do not rename them. The skeleton is
@@ -62,7 +64,7 @@ The declaration keys are flat and load-bearing: CI rewrites `imageTag<Env>` and
 | Pull request | build only (no GitOps bump) |
 | Merge to `main` | build → `imageTagDev` bumped → dev auto-syncs |
 | Push a `v*` tag | build → staging + prod tags recorded → staging auto-syncs |
-| Prod | **manual** — click Sync on `<app>-prod` in ArgoCD |
+| Prod | not deployable yet — no `<app>-prod` Application while declarations are single-environment |
 
 Rollback is a sync to an older revision; nothing is rebuilt.
 
