@@ -73,6 +73,7 @@ spec:
   # lives here, not in spec.template, because the ApplicationSet itself must
   # stay valid YAML before the Go template runs.
   templatePatch: |
+    {{- if or .valuesFile (eq .autoSync "true") }}
     spec:
       {{- if .valuesFile }}
       source:
@@ -86,3 +87,6 @@ spec:
           prune: true
           selfHeal: true
       {{- end }}
+    {{- else }}
+    {}
+    {{- end }}

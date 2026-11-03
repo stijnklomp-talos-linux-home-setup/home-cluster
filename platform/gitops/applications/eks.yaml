@@ -69,4 +69,6 @@ spec:
         automated:
           prune: true
           selfHeal: true
+    {{- else }}
+    {}
     {{- end }}
