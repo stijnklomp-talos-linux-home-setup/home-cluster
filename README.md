@@ -20,6 +20,62 @@ duplicated into this repo — see [Where credentials live](#where-credentials-li
 - **I want to understand the design** → [`developer/docs/architecture-decision-log/`](developer/docs/architecture-decision-log/README.md) — the ADRs, in order.
 - **I want to run or repair the cluster** → [`platform/README.md`](platform/README.md) — components, install order, teardown order.
 - **I need the restricted runbooks** → clone `home-cluster-internal` (access is separate, by design).
+- **I'm setting up a new machine** → [Set up a machine](#set-up-a-machine) — create the sibling config dir and verify access.
+
+## Set up a machine
+
+This repo expects a sibling directory, `../home-cluster-1-config/`, outside the
+working tree. It holds the live client configs and is gitignored — never commit
+or push it.
+
+| Requirement | Value |
+|---|---|
+| Docker | every cluster CLI runs in a container |
+| terragrunt | on the host; the infra units invoke it directly |
+| AWS CLI + SSO | profile `testing`, account `220402652377`, region `eu-west-1` |
+| S3 state bucket | `home-terraform-state-220402652377` (created by `platform/infra/terraform-remote-state/`) |
+
+### You already have cluster access
+
+1. Create the directory with tight permissions:
+
+   ```sh
+   mkdir -p ../home-cluster-1-config
+   chmod 700 ../home-cluster-1-config
+   ```
+
+2. Add `kubeconfig` and `talosconfig` (mode 600). Either copy them from the
+   cluster owner, or regenerate them from Terraform state — no cluster access
+   is needed for that, the outputs come from S3:
+
+   ```sh
+   aws sso login --profile testing
+   cd platform/infra/terraform-home-talos/prod
+   terragrunt init
+   terragrunt output -raw talosconfig > ../../../../../home-cluster-1-config/talosconfig
+   terragrunt output -raw kubeconfig  > ../../../../../home-cluster-1-config/kubeconfig
+   chmod 600 ../../../../../home-cluster-1-config/talosconfig
+   chmod 600 ../../../../../home-cluster-1-config/kubeconfig
+   cd ../../../..
+   ```
+
+3. Verify from the repo root:
+
+   ```sh
+   docker run --rm -v "$PWD/../home-cluster-1-config:/cfg:ro" \
+     registry.k8s.io/kubectl:v1.36.4 --kubeconfig /cfg/kubeconfig get nodes
+
+   docker run --rm -v "$PWD/../home-cluster-1-config:/cfg:ro" \
+     ghcr.io/siderolabs/talosctl:v1.13.9 --talosconfig /cfg/talosconfig version
+   ```
+
+4. Optional: clone `home-cluster-internal` next to this repo for the restricted
+   runbooks.
+
+Rebuilding the cluster from zero is a separate, partly manual process: see
+[`platform/node/install-talos-linux.md`](platform/node/install-talos-linux.md),
+[`platform/infra/terraform-remote-state/`](platform/infra/terraform-remote-state/),
+and [`platform/infra/terraform-home-talos/`](platform/infra/terraform-home-talos/).
 
 ## What runs where
 
@@ -47,7 +103,7 @@ duplicated into this repo — see [Where credentials live](#where-credentials-li
 
 Never in this repo. Live material stays outside the working tree:
 
-- `../home-cluster-1-config/` — kubeconfig + talosconfig only (sibling directory, ignored by git). Machine configs and the cluster CA/secrets are now managed by `platform/infra/terraform-home-talos/`; the CA lives in that unit's S3 Terraform state.
+- `../home-cluster-1-config/` — `kubeconfig` + `talosconfig` only. Created per [Set up a machine](#set-up-a-machine); gitignored and kept outside the tree so it can never be pushed. Machine configs and the cluster CA are now managed by `platform/infra/terraform-home-talos/`; the CA lives in that unit's S3 Terraform state.
 - Component-local `secrets/` — each is gitignored; only `*.example.yaml` is committed.
 - The restricted repo — `home-cluster-internal`.
 

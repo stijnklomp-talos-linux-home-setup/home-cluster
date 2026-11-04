@@ -44,6 +44,9 @@ terragrunt output -raw talosconfig > ../../../../../home-cluster-1-config/talosc
 terragrunt output -raw kubeconfig  > ../../../../../home-cluster-1-config/kubeconfig
 ```
 
+On a new machine, see the root README's [Set up a machine](../../../README.md#set-up-a-machine)
+for creating `../home-cluster-1-config/` first.
+
 ## What is still manual
 
 - `config_patches` only override the installer image and the control-plane
